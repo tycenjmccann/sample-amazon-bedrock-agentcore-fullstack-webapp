@@ -14,7 +14,7 @@ new AgentCoreInfraStack(app, 'AgentCoreInfra', {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
   },
-  description: 'AgentCore Infrastructure: Container registry, build pipeline, and IAM roles',
+  description: 'AgentCore Infrastructure: Container registry, build pipeline, and IAM roles (uksb-q3p3ydk6f3)',
 });
 
 // Auth stack (Cognito User Pool)

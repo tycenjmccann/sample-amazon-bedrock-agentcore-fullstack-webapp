@@ -17,7 +17,7 @@ export default function Navigation() {
       }}
       items={[
         { type: 'link', text: 'Dashboard', href: '/' },
-        { type: 'link', text: 'Agents', href: '/agents' },
+        { type: 'link', text: 'Agent Builder', href: '/agents' },
         { type: 'link', text: 'Chat', href: '/chat' },
         { type: 'divider' },
         {

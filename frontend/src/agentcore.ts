@@ -8,6 +8,8 @@ const localAgentUrl = (import.meta as any).env.VITE_AGENT_RUNTIME_URL || '/api';
 
 export interface InvokeAgentRequest {
   prompt: string;
+  agentRuntimeArn?: string;
+  persona?: string;
   onChunk?: (chunk: string) => void;
 }
 
@@ -20,7 +22,7 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
     // Local development mode - call local AgentCore instance
     if (isLocalDev) {
       console.log('Invoking local AgentCore:', { url: localAgentUrl });
-      console.log('Request payload:', { prompt: request.prompt });
+      console.log('Request payload:', { prompt: request.prompt, persona: request.persona });
 
       const response = await fetch(`${localAgentUrl}/invocations`, {
         method: 'POST',
@@ -28,7 +30,8 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: request.prompt
+          prompt: request.prompt,
+          persona: request.persona,
         }),
       });
 
@@ -119,9 +122,10 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
     }
 
     // Production mode - call AWS AgentCore
-    // Check if runtime ARN is available
-    if (!agentRuntimeArn) {
-      throw new Error('AgentCore Runtime ARN not configured. Please check deployment.');
+    // Use dynamic ARN if provided, otherwise fall back to env var
+    const runtimeArn = request.agentRuntimeArn || agentRuntimeArn;
+    if (!runtimeArn) {
+      throw new Error('AgentCore Runtime ARN not configured. Please select an agent or check deployment.');
     }
 
     // Get JWT access token from Cognito (required for AgentCore as per AWS documentation)
@@ -132,7 +136,7 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
     }
 
     // URL encode the agent runtime ARN for the API call (as per AWS documentation)
-    const encodedAgentRuntimeArn = encodeURIComponent(agentRuntimeArn);
+    const encodedAgentRuntimeArn = encodeURIComponent(runtimeArn);
 
     // Use the correct AgentCore endpoint format from AWS documentation
     const url = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${encodedAgentRuntimeArn}/invocations?qualifier=DEFAULT`;

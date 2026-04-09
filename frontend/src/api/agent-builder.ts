@@ -26,7 +26,7 @@ export interface DeployResponse {
   status: string;
   agentRuntimeId: string;
   agentRuntimeName: string;
-  artifactPath: string;
+  artifactS3Uri: string;
   message: string;
   response: Record<string, unknown>;
 }

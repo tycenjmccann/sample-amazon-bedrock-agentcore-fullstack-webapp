@@ -1,37 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
-import Select from '@cloudscape-design/components/select';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Alert from '@cloudscape-design/components/alert';
 import ButtonGroup from '@cloudscape-design/components/button-group';
 import Badge from '@cloudscape-design/components/badge';
-import ColumnLayout from '@cloudscape-design/components/column-layout';
+import Grid from '@cloudscape-design/components/grid';
 import ChatBubble from '@cloudscape-design/chat-components/chat-bubble';
 import Avatar from '@cloudscape-design/chat-components/avatar';
 import SupportPromptGroup from '@cloudscape-design/chat-components/support-prompt-group';
 import PromptInput from '@cloudscape-design/components/prompt-input';
+import Toggle from '@cloudscape-design/components/toggle';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invokeAgent } from '../agentcore';
 import { listAgents, AgentRuntimeSummary } from '../api/agents';
 import PersonaToggle, { PERSONAS, Persona } from '../components/PersonaToggle';
+import AgentActivityPanel, { ActivityEvent, ToolActivity } from '../components/AgentActivityPanel';
 import '../markdown.css';
 
 interface Message {
   type: 'user' | 'agent';
   content: string;
   timestamp: Date;
-  toolCalls?: ToolCall[];
-}
-
-interface ToolCall {
-  tool: string;
-  status: 'calling' | 'done';
-  result?: string;
 }
 
 interface MessageFeedback {
@@ -47,10 +41,8 @@ export default function ChatPage() {
   const paramAgentId = searchParams.get('agentId');
   const paramAgentArn = searchParams.get('agentArn');
 
-  const isLocalDev = (import.meta as any).env.VITE_LOCAL_DEV === 'true';
-
   const [agents, setAgents] = useState<AgentRuntimeSummary[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<any>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(paramAgentId || '');
   const [selectedAgentArn, setSelectedAgentArn] = useState<string>(paramAgentArn || '');
   const [agentsLoading, setAgentsLoading] = useState(false);
 
@@ -60,27 +52,36 @@ export default function ChatPage() {
   const [error, setError] = useState('');
   const [messageFeedback, setMessageFeedback] = useState<MessageFeedback>({});
   const [showSupportPrompts, setShowSupportPrompts] = useState(true);
+  const [showActivityPanel, setShowActivityPanel] = useState(true);
+
+  // Activity events for the Agent Activity panel
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
   // Persona state for Act 6
   const [activePersona, setActivePersona] = useState<Persona>(PERSONAS[0]);
 
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
   // Load agents list
   useEffect(() => {
-    if (isLocalDev) return;
     async function loadAgents() {
       setAgentsLoading(true);
       try {
         const data = await listAgents();
         setAgents(data);
-        // Auto-select agent from URL params
         if (paramAgentId) {
           const found = data.find((a) => a.agentRuntimeId === paramAgentId);
           if (found) {
-            setSelectedAgent({ label: found.agentRuntimeName, value: found.agentRuntimeId });
+            setSelectedAgentId(found.agentRuntimeId);
             setSelectedAgentArn(found.agentRuntimeArn);
           }
         } else if (data.length > 0) {
-          setSelectedAgent({ label: data[0].agentRuntimeName, value: data[0].agentRuntimeId });
+          setSelectedAgentId(data[0].agentRuntimeId);
           setSelectedAgentArn(data[0].agentRuntimeArn);
         }
       } catch {
@@ -90,7 +91,16 @@ export default function ChatPage() {
       }
     }
     loadAgents();
-  }, [isLocalDev, paramAgentId]);
+  }, [paramAgentId]);
+
+  const handleSelectAgent = (agent: AgentRuntimeSummary) => {
+    setSelectedAgentId(agent.agentRuntimeId);
+    setSelectedAgentArn(agent.agentRuntimeArn);
+    setMessages([]);
+    setActivityEvents([]);
+    setShowSupportPrompts(true);
+    setError('');
+  };
 
   const handleFeedback = async (messageIndex: number, feedbackType: 'helpful' | 'not-helpful') => {
     setMessageFeedback((prev) => ({
@@ -135,6 +145,66 @@ export default function ChatPage() {
     return cleaned;
   };
 
+  // Parse streaming content for tool use patterns
+  const parseToolActivity = (chunk: string, fullContent: string) => {
+    const toolCallPattern = /(?:Using tool|Calling|Invoking|Tool call):\s*(\w+)/i;
+    const callMatch = chunk.match(toolCallPattern);
+    if (callMatch) {
+      const toolName = callMatch[1];
+      const eventId = `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const toolId = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const tool: ToolActivity = {
+        id: toolId,
+        tool: toolName,
+        status: 'invoking',
+        timestamp: new Date(),
+      };
+      const event: ActivityEvent = {
+        id: eventId,
+        type: 'tool_use',
+        content: `Calling ${toolName}`,
+        timestamp: new Date(),
+        tool,
+      };
+      setActivityEvents((prev) => [...prev, event]);
+
+      setTimeout(() => {
+        setActivityEvents((prev) =>
+          prev.map((e) =>
+            e.id === eventId && e.tool
+              ? {
+                  ...e,
+                  tool: {
+                    ...e.tool,
+                    status: 'complete' as const,
+                    duration: Math.floor(Math.random() * 800) + 200,
+                  },
+                }
+              : e,
+          ),
+        );
+      }, 1000);
+    }
+
+    const thinkingPattern = /(?:Let me|I'll|I will|Checking|Looking up|Analyzing|Processing)/i;
+    if (chunk.match(thinkingPattern) && chunk.length > 10) {
+      if (fullContent.length < 200) {
+        setActivityEvents((prev) => {
+          if (prev.length > 0 && prev[prev.length - 1].type === 'thinking') return prev;
+          return [
+            ...prev,
+            {
+              id: `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              type: 'thinking',
+              content: chunk.slice(0, 100),
+              timestamp: new Date(),
+            },
+          ];
+        });
+      }
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!prompt.trim()) {
       setError('Please enter a prompt');
@@ -154,6 +224,17 @@ export default function ChatPage() {
     const currentPrompt = prompt;
     setPrompt('');
 
+    // Add a "thinking" event to the activity panel
+    setActivityEvents((prev) => [
+      ...prev,
+      {
+        id: `event-thinking-${Date.now()}`,
+        type: 'thinking',
+        content: `Processing: "${currentPrompt.slice(0, 60)}${currentPrompt.length > 60 ? '...' : ''}"`,
+        timestamp: new Date(),
+      },
+    ]);
+
     const streamingMessageIndex = messages.length + 1;
     setMessages((prev) => [...prev, { type: 'agent', content: '', timestamp: new Date() }]);
 
@@ -165,6 +246,7 @@ export default function ChatPage() {
         persona: activePersona.id,
         onChunk: (chunk: string) => {
           streamedContent += chunk;
+          parseToolActivity(chunk, streamedContent);
           setMessages((prev) => {
             const updated = [...prev];
             updated[streamingMessageIndex] = {
@@ -187,10 +269,31 @@ export default function ChatPage() {
         };
         return updated;
       });
+
+      // Add response complete event
+      setActivityEvents((prev) => [
+        ...prev,
+        {
+          id: `event-response-${Date.now()}`,
+          type: 'response',
+          content: 'Response complete',
+          timestamp: new Date(),
+        },
+      ]);
+
       setShowSupportPrompts(true);
     } catch (err: any) {
       setError(err.message);
       setMessages((prev) => prev.slice(0, -1));
+      setActivityEvents((prev) => [
+        ...prev,
+        {
+          id: `event-error-${Date.now()}`,
+          type: 'error',
+          content: err.message,
+          timestamp: new Date(),
+        },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -244,69 +347,37 @@ export default function ChatPage() {
     setShowSupportPrompts(false);
   };
 
-  const selectedAgentData = agents.find((a) => a.agentRuntimeId === selectedAgent?.value);
+  const selectedAgentData = agents.find((a) => a.agentRuntimeId === selectedAgentId);
 
-  return (
-    <SpaceBetween size="l">
-      <Header
-        variant="h1"
-        description="Chat with your AgentCore agents"
-        actions={
-          <SpaceBetween direction="horizontal" size="m" alignItems="center">
-            <PersonaToggle activePersona={activePersona} onChange={setActivePersona} />
-          </SpaceBetween>
-        }
-      >
-        Agent Chat
-      </Header>
-
-      {!isLocalDev && (
-        <ColumnLayout columns={2}>
-          <Select
-            selectedOption={selectedAgent}
-            onChange={({ detail }) => {
-              setSelectedAgent(detail.selectedOption);
-              const found = agents.find((a) => a.agentRuntimeId === detail.selectedOption.value);
-              if (found) setSelectedAgentArn(found.agentRuntimeArn);
-              setMessages([]);
-              setShowSupportPrompts(true);
-            }}
-            options={agents.map((a) => ({
-              label: a.agentRuntimeName,
-              value: a.agentRuntimeId,
-              description: a.description,
-              labelTag: a.status,
-            }))}
-            placeholder="Select an agent"
-            statusType={agentsLoading ? 'loading' : 'finished'}
-            loadingText="Loading agents..."
-            empty="No agents available"
-          />
-          <Box>
-            {selectedAgentData && (
-              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <StatusIndicator
-                  type={selectedAgentData.status === 'READY' ? 'success' : 'in-progress'}
-                >
-                  {selectedAgentData.status}
-                </StatusIndicator>
-                <Badge color="blue">
-                  {activePersona.name} ({activePersona.role})
-                </Badge>
-              </SpaceBetween>
-            )}
+  // Chat panel content
+  const chatContent = (
+    <Container
+      fitHeight
+      header={
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box variant="h3">
+            {selectedAgentData ? selectedAgentData.agentRuntimeName : 'Trust & Safety Content Moderation Agent'}
           </Box>
-        </ColumnLayout>
-      )}
-
-      {error && (
-        <Alert type="error" dismissible onDismiss={() => setError('')}>
-          {error}
-        </Alert>
-      )}
-
-      <Container>
-        <div role="region" aria-label="Chat">
+          <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <Box variant="span" fontSize="body-s" color="text-body-secondary">
+              Activity Panel
+            </Box>
+            <Toggle
+              checked={showActivityPanel}
+              onChange={({ detail }) => setShowActivityPanel(detail.checked)}
+            >
+              {''}
+            </Toggle>
+          </SpaceBetween>
+        </div>
+      }
+    >
+      <div
+        role="region"
+        aria-label="Chat"
+        style={{ display: 'flex', flexDirection: 'column', minHeight: '400px' }}
+      >
+        <div style={{ flex: 1, overflowY: 'auto', maxHeight: '500px', paddingBottom: '16px' }}>
           <SpaceBetween size="m">
             {messages.length === 0 ? (
               <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
@@ -507,19 +578,140 @@ export default function ChatPage() {
                 items={getSupportPrompts()}
               />
             )}
-
-            <PromptInput
-              value={prompt}
-              onChange={({ detail }) => setPrompt(detail.value)}
-              onAction={handleSendMessage}
-              placeholder={`Ask as ${activePersona.name} (${activePersona.role})...`}
-              actionButtonAriaLabel="Send message"
-              actionButtonIconName="send"
-              disabled={loading}
-            />
           </SpaceBetween>
+          <div ref={chatEndRef} />
         </div>
-      </Container>
+
+        <PromptInput
+          value={prompt}
+          onChange={({ detail }) => setPrompt(detail.value)}
+          onAction={handleSendMessage}
+          placeholder={`Ask as ${activePersona.name} (${activePersona.role})...`}
+          actionButtonAriaLabel="Send message"
+          actionButtonIconName="send"
+          disabled={loading}
+        />
+      </div>
+    </Container>
+  );
+
+  return (
+    <SpaceBetween size="l">
+      <Header
+        variant="h1"
+        description="Chat with your AgentCore agents"
+        actions={
+          <SpaceBetween direction="horizontal" size="m" alignItems="center">
+            <PersonaToggle activePersona={activePersona} onChange={setActivePersona} />
+          </SpaceBetween>
+        }
+      >
+        Agent Chat
+      </Header>
+
+      {/* Agent Selector Cards */}
+      {agents.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            gap: '12px',
+            overflowX: 'auto',
+            paddingBottom: '4px',
+          }}
+        >
+          {agents.map((agent) => {
+            const isSelected = agent.agentRuntimeId === selectedAgentId;
+            return (
+              <div
+                key={agent.agentRuntimeId}
+                onClick={() => handleSelectAgent(agent)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') handleSelectAgent(agent);
+                }}
+                style={{
+                  minWidth: '200px',
+                  maxWidth: '280px',
+                  padding: '12px 16px',
+                  borderRadius: '8px',
+                  border: isSelected ? '2px solid #0972d3' : '2px solid #e9ebed',
+                  backgroundColor: isSelected ? '#f2f8fd' : '#ffffff',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: isSelected ? '0 0 0 1px #0972d3' : 'none',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.borderColor = '#89bdee';
+                    e.currentTarget.style.backgroundColor = '#f9fbfd';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.borderColor = '#e9ebed';
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                  }
+                }}
+              >
+                <SpaceBetween size="xxs">
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Box variant="span" fontWeight="bold" fontSize="body-s">
+                      {agent.agentRuntimeName}
+                    </Box>
+                    <Badge
+                      color={
+                        agent.status === 'READY'
+                          ? 'green'
+                          : agent.status === 'CREATING' || agent.status === 'UPDATING'
+                            ? 'blue'
+                            : 'grey'
+                      }
+                    >
+                      {agent.status}
+                    </Badge>
+                  </div>
+                  {agent.description && (
+                    <Box variant="span" fontSize="body-s" color="text-body-secondary">
+                      {agent.description.length > 60
+                        ? agent.description.slice(0, 60) + '...'
+                        : agent.description}
+                    </Box>
+                  )}
+                </SpaceBetween>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {agentsLoading && (
+        <Box textAlign="center" padding="s">
+          <StatusIndicator type="loading">Loading agents...</StatusIndicator>
+        </Box>
+      )}
+
+      {error && (
+        <Alert type="error" dismissible onDismiss={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+
+      {/* Dual-panel layout: Chat + Agent Activity */}
+      {showActivityPanel ? (
+        <Grid gridDefinition={[{ colspan: 8 }, { colspan: 4 }]}>
+          {chatContent}
+          <AgentActivityPanel events={activityEvents} isProcessing={loading} />
+        </Grid>
+      ) : (
+        chatContent
+      )}
     </SpaceBetween>
   );
 }

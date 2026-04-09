@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:local": "vite --mode local",
+    "dev:local": "VITE_LOCAL_DEV=true vite",
     "build": "vite build",
     "preview": "vite preview"
   },

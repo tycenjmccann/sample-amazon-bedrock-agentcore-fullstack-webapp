@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 import zipfile
 from io import BytesIO
 from typing import List, Optional
@@ -429,24 +428,41 @@ def agent_builder_deploy(body: AgentDeployRequest):
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.read()
 
-        # Also write the zip to a temp file for reference
-        with tempfile.NamedTemporaryFile(
-            suffix=".zip", prefix=f"agent-{safe_name}-", delete=False
-        ) as tmp:
-            tmp.write(zip_bytes)
-            artifact_path = tmp.name
-            logger.info(f"Agent artifact saved to {artifact_path}")
+        # Upload the zip artifact to S3 so AgentCore can access it
+        s3_client = boto3.client("s3", region_name=REGION)
+        sts = boto3.client("sts", region_name=REGION)
+        account_id = sts.get_caller_identity()["Account"]
+
+        artifact_bucket = os.environ.get("AGENTCORE_ARTIFACT_BUCKET", "")
+        if not artifact_bucket:
+            artifact_bucket = f"agentcore-artifacts-{account_id}-{REGION}"
+            # Ensure the bucket exists
+            try:
+                s3_client.head_bucket(Bucket=artifact_bucket)
+            except ClientError:
+                create_kwargs = {"Bucket": artifact_bucket}
+                if REGION != "us-east-1":
+                    create_kwargs["CreateBucketConfiguration"] = {
+                        "LocationConstraint": REGION
+                    }
+                s3_client.create_bucket(**create_kwargs)
+                logger.info(f"Created S3 bucket: {artifact_bucket}")
+
+        artifact_key = f"agent-builder/{safe_name}/{safe_name}.zip"
+        s3_client.put_object(
+            Bucket=artifact_bucket,
+            Key=artifact_key,
+            Body=zip_bytes,
+        )
+        logger.info(f"Agent artifact uploaded to s3://{artifact_bucket}/{artifact_key}")
 
         # Deploy to AgentCore using the control plane API
         client = get_control_client()
 
         # Get the account's default role ARN for agent runtimes
         # The user needs to have set up an AgentCore execution role
-        role_arn = os.environ.get("AGENTCORE_EXECUTION_ROLE_ARN", "")
+        role_arn = os.environ.get("AGENTCORE_EXECUTION_ROLE_ARN", "")  
         if not role_arn:
-            # Try to construct a default role ARN
-            sts = boto3.client("sts", region_name=REGION)
-            account_id = sts.get_caller_identity()["Account"]
             role_arn = f"arn:aws:iam::{account_id}:role/BedrockAgentCoreExecutionRole"
 
         create_params = {
@@ -457,7 +473,10 @@ def agent_builder_deploy(body: AgentDeployRequest):
                     "runtime": "PYTHON_3_13",
                     "entryPoint": ["python", "strands_agent.py"],
                 },
-                "s3Configuration": None,
+                "s3Configuration": {
+                    "bucketName": artifact_bucket,
+                    "objectKey": artifact_key,
+                },
             },
             "roleArn": role_arn,
             "networkConfiguration": {
@@ -489,7 +508,7 @@ def agent_builder_deploy(body: AgentDeployRequest):
             "status": "deploying",
             "agentRuntimeId": response.get("agentRuntimeId"),
             "agentRuntimeName": safe_name,
-            "artifactPath": artifact_path,
+            "artifactS3Uri": f"s3://{artifact_bucket}/{artifact_key}",
             "message": f"Agent '{safe_name}' is being deployed to AgentCore Runtime.",
             "response": response,
         }

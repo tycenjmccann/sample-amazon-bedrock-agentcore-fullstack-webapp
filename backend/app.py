@@ -406,10 +406,11 @@ def generate_test_prompt(body: GenerateTestRequest):
                 obj = s3.get_object(Bucket=s3_info["bucket"], Key=s3_info["prefix"])
                 zip_bytes = obj["Body"].read()
                 with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                    for name in zf.namelist():
-                        if name.endswith(".py") and "agent" in name.lower() or name == "strands_agent.py":
+                    # Look for the agent entrypoint first
+                    for name in ["strands_agent.py", "agent.py", "app.py"]:
+                        if name in zf.namelist():
                             code = zf.read(name).decode("utf-8")
-                            agent_code_info = code[:3000]  # First 3000 chars
+                            agent_code_info = code[:4000]
                             break
             except Exception:
                 pass

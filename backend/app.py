@@ -260,6 +260,63 @@ def get_policy(policy_engine_id: str, policy_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Agent Runtime Invocation
+# ---------------------------------------------------------------------------
+
+class InvokeAgentRequest(BaseModel):
+    prompt: str
+
+
+def get_runtime_client():
+    return boto3.client("bedrock-agentcore", region_name=REGION)
+
+
+@app.post("/api/agents/{agent_runtime_id}/invoke")
+async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
+    """Invoke a deployed AgentCore agent runtime and stream the response."""
+    from fastapi.responses import StreamingResponse
+
+    try:
+        # Look up the agent to get its ARN
+        control = get_control_client()
+        agent = control.get_agent_runtime(agentRuntimeId=agent_runtime_id)
+        arn = agent["agentRuntimeArn"]
+
+        runtime = get_runtime_client()
+        response = runtime.invoke_agent_runtime(
+            agentRuntimeArn=arn,
+            qualifier="DEFAULT",
+            contentType="application/json",
+            accept="application/json",
+            payload=json.dumps({"prompt": body.prompt}).encode("utf-8"),
+        )
+
+        def generate():
+            stream = response.get("response")
+            if stream is None:
+                yield "data: No response\n\n"
+                return
+            if hasattr(stream, "iter_chunks"):
+                for chunk in stream.iter_chunks():
+                    text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                    yield f"data: {json.dumps(text)}\n\n"
+            elif hasattr(stream, "read"):
+                data = stream.read()
+                text = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+                yield f"data: {json.dumps(text)}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code == "ResourceNotFoundException":
+            raise HTTPException(status_code=404, detail="Agent runtime not found")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 
@@ -273,7 +330,7 @@ def health_check():
 # ---------------------------------------------------------------------------
 
 AGENT_BUILDER_MODEL_ID = os.environ.get(
-    "AGENT_BUILDER_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514"
+    "AGENT_BUILDER_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"
 )
 
 AGENT_BUILDER_SYSTEM_PROMPT = """You are an Agent Configuration Assistant for Amazon Bedrock AgentCore.
@@ -289,7 +346,7 @@ IMPORTANT CODE GENERATION RULES:
 - Always use `from strands import Agent, tool` for imports
 - Always use `from strands.models import BedrockModel` for the model
 - Always use `from bedrock_agentcore.runtime import BedrockAgentCoreApp` for the runtime
-- Default model: `us.anthropic.claude-sonnet-4-20250514` unless user specifies otherwise
+- Default model: `us.anthropic.claude-sonnet-4-20250514-v1:0` unless user specifies otherwise
 - Available alternative models: `us.meta.llama3-3-70b-instruct-v1:0`, `us.amazon.nova-pro-v1:0`
 - Tools should be defined as functions decorated with `@tool`
 - Each tool function MUST have a docstring explaining what it does
@@ -301,6 +358,12 @@ When the user confirms they want to deploy, include a special marker in your res
 ```agent-config
 {"agent_name": "<name>", "description": "<description>"}
 ```
+
+AGENT NAMING RULES (strict):
+- agent_name must match: [a-zA-Z][a-zA-Z0-9_]{0,47}
+- Must start with a letter, only letters/numbers/underscores, max 48 chars
+- Use snake_case (e.g. "trust_safety_agent", "dating_app_moderator")
+- Never use dashes, spaces, or special characters in agent_name
 
 Followed by the complete agent code in a Python code block marked with:
 ```python-deploy
@@ -395,7 +458,7 @@ class AgentDeployRequest(BaseModel):
     agent_name: str
     description: str
     agent_code: str
-    model_id: Optional[str] = "us.anthropic.claude-sonnet-4-20250514"
+    model_id: Optional[str] = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 
 @app.post("/api/agent-builder/deploy")
@@ -407,9 +470,10 @@ def agent_builder_deploy(body: AgentDeployRequest):
     """
     try:
         # Sanitize agent name for use as a runtime name
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", body.agent_name.lower().strip())
-        if not safe_name:
-            safe_name = "custom-agent"
+        safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", body.agent_name.strip())
+        safe_name = re.sub(r"_+", "_", safe_name).strip("_")[:48]
+        if not safe_name or not safe_name[0].isalpha():
+            safe_name = "agent_" + safe_name
 
         # Create a zip artifact containing the agent code
         zip_buffer = BytesIO()
@@ -467,19 +531,31 @@ def agent_builder_deploy(body: AgentDeployRequest):
         # The user needs to have set up an AgentCore execution role
         role_arn = os.environ.get("AGENTCORE_EXECUTION_ROLE_ARN", "")  
         if not role_arn:
-            role_arn = f"arn:aws:iam::{account_id}:role/BedrockAgentCoreExecutionRole"
+            # Look up role from an existing agent runtime
+            try:
+                existing = client.list_agent_runtimes(maxResults=1)
+                runtimes = existing.get("agentRuntimes", [])
+                if runtimes:
+                    existing_detail = client.get_agent_runtime(agentRuntimeId=runtimes[0]["agentRuntimeId"])
+                    role_arn = existing_detail.get("roleArn", "")
+            except Exception:
+                pass
+        if not role_arn:
+            raise HTTPException(status_code=400, detail="No AGENTCORE_EXECUTION_ROLE_ARN configured and no existing agent to copy role from")
 
         create_params = {
             "agentRuntimeName": safe_name,
             "description": body.description or f"Agent created via Agent Builder: {safe_name}",
             "agentRuntimeArtifact": {
                 "codeConfiguration": {
+                    "code": {
+                        "s3": {
+                            "bucket": artifact_bucket,
+                            "prefix": artifact_key,
+                        },
+                    },
                     "runtime": "PYTHON_3_13",
-                    "entryPoint": ["python", "strands_agent.py"],
-                },
-                "s3Configuration": {
-                    "bucketName": artifact_bucket,
-                    "objectKey": artifact_key,
+                    "entryPoint": ["strands_agent.py"],
                 },
             },
             "roleArn": role_arn,
@@ -493,7 +569,7 @@ def agent_builder_deploy(body: AgentDeployRequest):
         sg_ids = os.environ.get("AGENTCORE_SECURITY_GROUP_IDS", "")
         if subnet_ids and sg_ids:
             create_params["networkConfiguration"] = {
-                "networkMode": "CUSTOMER_VPC",
+                "networkMode": "VPC",
                 "networkModeConfig": {
                     "subnets": [s.strip() for s in subnet_ids.split(",")],
                     "securityGroups": [s.strip() for s in sg_ids.split(",")],

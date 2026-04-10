@@ -19,12 +19,25 @@ export interface InvokeAgentResponse {
 
 export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAgentResponse> => {
   try {
-    // Local development mode - call local AgentCore instance
+    // Local development mode - call management backend to invoke real AgentCore agents
     if (isLocalDev) {
-      console.log('Invoking local AgentCore:', { url: localAgentUrl });
+      // If an agent ARN is provided, extract the ID and invoke via management backend
+      const runtimeArn = request.agentRuntimeArn || agentRuntimeArn;
+      let invokeUrl = `${localAgentUrl}/invocations`;
+
+      if (runtimeArn) {
+        // Extract agent runtime ID from ARN (last segment after /)
+        const arnParts = runtimeArn.split('/');
+        const agentRuntimeId = arnParts[arnParts.length - 1];
+        invokeUrl = `/management/api/agents/${encodeURIComponent(agentRuntimeId)}/invoke`;
+        console.log('Invoking real AgentCore agent via management backend:', { agentRuntimeId, invokeUrl });
+      } else {
+        console.log('No agent selected, falling back to local agent:', { url: localAgentUrl });
+      }
+
       console.log('Request payload:', { prompt: request.prompt, persona: request.persona });
 
-      const response = await fetch(`${localAgentUrl}/invocations`, {
+      const response = await fetch(invokeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

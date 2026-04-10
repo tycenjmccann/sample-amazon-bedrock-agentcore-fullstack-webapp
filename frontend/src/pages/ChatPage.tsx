@@ -134,6 +134,8 @@ export default function ChatPage() {
 
   const cleanResponse = (response: string): string => {
     let cleaned = response.trim();
+    // Remove tool use markers
+    cleaned = cleaned.replace(/\[Using tool:\s*\w+\]\s*/g, '');
     if (
       (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
       (cleaned.startsWith("'") && cleaned.endsWith("'"))
@@ -147,10 +149,10 @@ export default function ChatPage() {
 
   // Parse streaming content for tool use patterns
   const parseToolActivity = (chunk: string, fullContent: string) => {
-    const toolCallPattern = /(?:Using tool|Calling|Invoking|Tool call):\s*(\w+)/i;
+    const toolCallPattern = /\[Using tool:\s*(\w+)\]|(?:Using tool|Calling|Invoking|Tool call):\s*(\w+)/i;
     const callMatch = chunk.match(toolCallPattern);
     if (callMatch) {
-      const toolName = callMatch[1];
+      const toolName = callMatch[1] || callMatch[2];
       const eventId = `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const toolId = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const tool: ToolActivity = {

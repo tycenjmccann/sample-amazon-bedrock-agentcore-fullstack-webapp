@@ -505,9 +505,15 @@ async def invoke(payload):
     prompt = payload.get("prompt", "Hello")
     stream = agent.stream_async(prompt)
     async for event in stream:
-        delta = event.get("event", {}).get("contentBlockDelta", {}).get("delta", {}).get("text")
+        evt = event.get("event", {})
+        # Stream text deltas
+        delta = evt.get("contentBlockDelta", {}).get("delta", {}).get("text")
         if delta:
             yield delta
+        # Emit tool use markers so the UI can show activity
+        tool_use = evt.get("contentBlockStart", {}).get("start", {}).get("toolUse")
+        if tool_use:
+            yield f"\\n[Using tool: {tool_use.get('name', 'unknown')}]\\n"
 
 app.run()
 '''

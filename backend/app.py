@@ -327,17 +327,7 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            # Stream the text in small chunks for a nice typing effect
-            import time
-            words = text.split(' ')
-            chunk = ''
-            for i, word in enumerate(words):
-                chunk += (' ' if chunk else '') + word
-                # Yield every 3-5 words for natural pacing
-                if len(chunk) > 20 or i == len(words) - 1:
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                    chunk = ''
-                    time.sleep(0.02)
+            yield f"data: {json.dumps(text)}\n\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 

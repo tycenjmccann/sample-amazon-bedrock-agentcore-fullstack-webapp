@@ -294,20 +294,47 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             if stream is None:
                 yield "data: No response\n\n"
                 return
-            # Read the response - may be streamed SSE or a single JSON blob
+
+            # Try to stream chunks as they arrive
+            if hasattr(stream, "iter_chunks"):
+                buffer = ""
+                for chunk in stream.iter_chunks():
+                    buffer += chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                    # Process complete lines from buffer
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if line.startswith("data: "):
+                            payload = line[6:]
+                            try:
+                                text = json.loads(payload)
+                                if isinstance(text, str):
+                                    yield f"data: {json.dumps(text)}\n\n"
+                                    continue
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                            yield f"data: {json.dumps(payload)}\n\n"
+                # Flush remaining buffer
+                if buffer.strip().startswith("data: "):
+                    payload = buffer.strip()[6:]
+                    try:
+                        text = json.loads(payload)
+                        if isinstance(text, str):
+                            yield f"data: {json.dumps(text)}\n\n"
+                            return
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    yield f"data: {json.dumps(payload)}\n\n"
+                return
+
+            # Fallback: read all at once (non-streaming agents)
             if hasattr(stream, "read"):
                 data = stream.read()
                 raw = data.decode("utf-8") if isinstance(data, bytes) else str(data)
-            elif hasattr(stream, "iter_chunks"):
-                parts = []
-                for chunk in stream.iter_chunks():
-                    parts.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
-                raw = "".join(parts)
             else:
                 raw = str(stream)
 
-            # Handle SSE-streamed responses (from streaming agents)
-            # Format: "data: \"chunk1\"\n\ndata: \"chunk2\"\n\n..."
+            # Handle SSE format
             if raw.startswith("data: "):
                 for line in raw.split("\n"):
                     line = line.strip()

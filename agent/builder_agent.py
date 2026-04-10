@@ -26,8 +26,8 @@ def deploy_agent(agent_name: str, agent_code: str, requirements: str = "", descr
     
     Args:
         agent_name: Name for the agent (snake_case, letters/numbers/underscores only, must start with a letter, max 48 chars)
-        agent_code: Complete Python source code for the agent (must use BedrockAgentCoreApp pattern)
-        requirements: Contents of requirements.txt (one package per line). Always include: strands-agents, strands-agents-tools, bedrock-agentcore, bedrock-agentcore-starter-toolkit, boto3
+        agent_code: Complete Python source code for the agent (must use BedrockAgentCoreApp pattern with @app.entrypoint and app.run())
+        requirements: Contents of requirements.txt. Default: strands-agents, strands-agents-tools, bedrock-agentcore, boto3. Do NOT include bedrock-agentcore-starter-toolkit.
         description: Short description of what the agent does
     """
     import re
@@ -64,11 +64,8 @@ def deploy_agent(agent_name: str, agent_code: str, requirements: str = "", descr
         if result.returncode != 0:
             return json.dumps({"status": "error", "step": "configure", "error": result.stderr or result.stdout})
 
-        # Deploy using CLI (this pre-builds deps with uv, packages everything, uploads to S3, creates runtime)
-        deploy_cmd = [
-            "agentcore", "deploy",
-            "-a", safe_name,
-        ]
+        # Deploy using CLI
+        deploy_cmd = ["agentcore", "deploy"]
         result = subprocess.run(deploy_cmd, capture_output=True, text=True, cwd=tmpdir, timeout=600)
         if result.returncode != 0:
             return json.dumps({"status": "error", "step": "deploy", "error": result.stderr or result.stdout})
@@ -363,7 +360,7 @@ def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
         return json.dumps({"status": "error", "error": str(e)})
 
 
-model = BedrockModel(model_id="global.anthropic.claude-haiku-4-5-20251001-v1:0")
+model = BedrockModel(model_id="us.anthropic.claude-opus-4-6-v1")
 
 # Opus model for high-quality code generation (used as a tool)
 CODEGEN_MODEL_ID = "us.anthropic.claude-opus-4-6-v1"

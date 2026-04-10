@@ -176,15 +176,17 @@ def create_gateway(name: str, description: str = ""):
 
 
 @tool
-def create_gateway_target(gateway_id: str, name: str, description: str, target_type: str = "lambda", lambda_arn: str = ""):
+def create_gateway_target(gateway_id: str, name: str, description: str, target_type: str = "lambda", lambda_arn: str = "", openapi_spec_uri: str = "", api_key: str = ""):
     """Add a tool target to an existing MCP Gateway. Each target becomes a tool the agent can call.
     
     Args:
         gateway_id: The gateway ID to add the target to
-        name: Name for this tool target (e.g. 'order_lookup', 'send_notification')
-        description: What this tool does
-        target_type: Type of target - 'lambda' for Lambda functions
+        name: Name for this tool target (e.g. 'SlackIntegration', 'InternalAPI')
+        description: What this tool target provides
+        target_type: Type of target - 'lambda' for Lambda functions, 'openapi' for OpenAPI spec
         lambda_arn: ARN of the Lambda function (required for lambda targets)
+        openapi_spec_uri: URL to OpenAPI spec JSON/YAML (required for openapi targets, e.g. https://api.example.com/openapi.json)
+        api_key: Optional API key for authenticating with the OpenAPI target
     """
     import boto3
     client = boto3.client("bedrock-agentcore-control", region_name=REGION)
@@ -193,11 +195,57 @@ def create_gateway_target(gateway_id: str, name: str, description: str, target_t
             "gatewayIdentifier": gateway_id,
             "name": name,
             "description": description or f"Tool target: {name}",
+            "credentialProviderConfigurations": [{"credentialProviderType": "GATEWAY_IAM_ROLE"}],
         }
         if target_type == "lambda" and lambda_arn:
             params["targetConfiguration"] = {
-                "lambdaTarget": {"lambdaArn": lambda_arn}
+                "mcp": {"lambda": {"lambdaArn": lambda_arn}}
             }
+        elif target_type == "openapi" and openapi_spec_uri:
+            # OpenAPI targets require a credential provider (API_KEY or OAUTH with a provider ARN).
+            # Download spec, upload to S3, and create with S3 reference.
+            import urllib.request
+            try:
+                with urllib.request.urlopen(openapi_spec_uri, timeout=15) as resp:
+                    spec_bytes = resp.read()
+                spec = json.loads(spec_bytes.decode("utf-8"))
+            except Exception as dl_err:
+                return json.dumps({"status": "error", "error": f"Failed to download OpenAPI spec: {dl_err}"})
+
+            # Upload to S3
+            s3 = boto3.client("s3", region_name=REGION)
+            sts = boto3.client("sts", region_name=REGION)
+            account = sts.get_caller_identity()["Account"]
+            bucket = f"agentcore-artifacts-{account}-{REGION}"
+            s3_key = f"gateway-specs/{name}-openapi.json"
+            s3.put_object(Bucket=bucket, Key=s3_key, Body=json.dumps(spec).encode(), ContentType="application/json")
+
+            cred_config = [{"credentialProviderType": "API_KEY", "credentialProvider": {
+                "apiKeyCredentialProvider": {"providerArn": api_key, "credentialParameterName": "X-API-Key", "credentialLocation": "HEADER"}
+            }}] if api_key else []
+
+            if not cred_config:
+                return json.dumps({
+                    "status": "needs_credentials",
+                    "s3_uri": f"s3://{bucket}/{s3_key}",
+                    "spec_endpoints": len(spec.get("paths", {})),
+                    "message": f"OpenAPI spec uploaded to S3 ({len(spec.get('paths', {}))} endpoints). OpenAPI targets require an API Key or OAuth credential provider ARN. Create one first, then I can complete the target setup.",
+                })
+
+            params["targetConfiguration"] = {"mcp": {"openApiSchema": {"s3": {"uri": f"s3://{bucket}/{s3_key}"}}}}
+            params["credentialProviderConfigurations"] = cred_config
+            if api_key:
+                params["credentialProviderConfigurations"] = [{
+                    "credentialProviderType": "CUSTOM",
+                    "apiKeyCredentialProvider": {
+                        "apiKey": api_key,
+                        "credentialLocation": "header",
+                        "credentialParameterName": "X-API-Key",
+                    }
+                }]
+        else:
+            return json.dumps({"status": "error", "error": f"For target_type='{target_type}', provide lambda_arn or openapi_spec_uri"})
+
         response = client.create_gateway_target(**params)
         response.pop("ResponseMetadata", None)
         for k in ("createdAt", "updatedAt"):
@@ -207,7 +255,8 @@ def create_gateway_target(gateway_id: str, name: str, description: str, target_t
             "status": "success",
             "target_id": response.get("targetId"),
             "name": name,
-            "message": f"Tool target '{name}' added to gateway {gateway_id}.",
+            "target_type": target_type,
+            "message": f"Tool target '{name}' ({target_type}) added to gateway {gateway_id}. The gateway will auto-discover tools from the {'Lambda' if target_type == 'lambda' else 'OpenAPI spec'}.",
         })
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})

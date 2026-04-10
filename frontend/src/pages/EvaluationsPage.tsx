@@ -17,6 +17,7 @@ import ProgressBar from '@cloudscape-design/components/progress-bar';
 import { listAgents, AgentRuntimeSummary } from '../api/agents';
 
 const API_BASE = '/management';
+const REGION = 'us-east-1';
 
 const BUILTIN_EVALUATORS = [
   { value: 'Builtin.Helpfulness', label: 'Helpfulness', description: 'Does the response help the user?' },
@@ -339,6 +340,12 @@ export default function EvaluationsPage() {
               <Box fontSize="heading-l">📊</Box>
               <Box variant="h3">No evaluations yet</Box>
               <Box>Select an agent, choose evaluators, and enter a test prompt to run your first evaluation.</Box>
+              <Box variant="small">
+                For full evaluation with OTEL traces, use the{' '}
+                <a href={`https://${REGION}.console.aws.amazon.com/bedrock-agentcore/home?region=${REGION}#/evaluations`} target="_blank" rel="noopener noreferrer" style={{ color: '#0972d3' }}>
+                  AgentCore Evaluations Console
+                </a>
+              </Box>
             </SpaceBetween>
           </Box>
         </Container>

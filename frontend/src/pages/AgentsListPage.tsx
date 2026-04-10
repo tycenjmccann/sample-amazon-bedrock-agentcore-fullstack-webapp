@@ -328,43 +328,36 @@ export default function AgentsListPage() {
     if (deployment.status !== 'ready' || !deployment.code || !deployment.agentName) return;
     setDeployment((prev) => ({ ...prev, status: 'deploying' }));
 
-    try {
-      const result = await deployAgent({
-        agent_name: deployment.agentName,
-        description: deployment.description || '',
-        agent_code: deployment.code,
-      });
+    // Send deploy request through the builder agent (uses CLI with pre-built deps)
+    const deployPrompt = `Deploy this agent now. Use the deploy_agent tool with:\n- agent_name: "${deployment.agentName}"\n- description: "${deployment.description || ''}"\n- requirements: "strands-agents\\nstrands-agents-tools\\nbedrock-agentcore\\nbedrock-agentcore-starter-toolkit\\nboto3\\n"\n- agent_code: the code from the canvas (I'll paste it below)\n\n\`\`\`python\n${deployment.code}\n\`\`\``;
 
-      setDeployment((prev) => ({
-        ...prev,
-        status: 'polling',
-        agentRuntimeId: result.agentRuntimeId,
-      }));
+    setMessages((prev) => [
+      ...prev,
+      { type: 'user', content: `Deploy **${deployment.agentName}** to AgentCore`, timestamp: new Date() },
+    ]);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: 'assistant',
-          content: `Deploying **${deployment.agentName}** to AgentCore Runtime...\n\nRuntime ID: \`${result.agentRuntimeId}\`\n\nI'll monitor the deployment status for you.`,
-          timestamp: new Date(),
-          isSystem: true,
-        },
-      ]);
-
-      pollDeploymentStatus(result.agentRuntimeId);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Deployment failed';
-      setDeployment((prev) => ({ ...prev, status: 'error', errorMessage: errorMsg }));
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: 'assistant',
-          content: `Deployment failed: ${errorMsg}\n\nPlease check your AWS credentials and AgentCore permissions, then try again.`,
-          timestamp: new Date(),
-          isSystem: true,
-        },
-      ]);
-    }
+    let fullResponse = '';
+    await streamAgentBuilderChat(
+      { messages: [{ role: 'user', content: deployPrompt }] },
+      (text) => {
+        fullResponse += text;
+        setStreamingContent(fullResponse);
+      },
+      () => {
+        setMessages((prev) => [
+          ...prev,
+          { type: 'assistant', content: fullResponse, timestamp: new Date() },
+        ]);
+        setStreamingContent('');
+        setDeployment((prev) => ({ ...prev, status: fullResponse.toLowerCase().includes('error') ? 'error' : 'success' }));
+        // Refresh agents list
+        listAgents().then((data) => setAgents(data)).catch(() => {});
+      },
+      (error) => {
+        setDeployment((prev) => ({ ...prev, status: 'error', errorMessage: error }));
+        setStreamingContent('');
+      },
+    );
   };
 
   const pollDeploymentStatus = async (agentRuntimeId: string) => {
@@ -864,7 +857,7 @@ export default function AgentsListPage() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 60px)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 100px)' }}>
       <div style={{ padding: '0 0 12px 0' }}>
         <Header
           variant="h1"
@@ -876,7 +869,7 @@ export default function AgentsListPage() {
 
       <div style={{ display: 'flex', flex: 1, gap: '16px', minHeight: 0 }}>
         {/* Left panel — Chat */}
-        <div style={{ flex: '0 0 45%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ flex: '0 0 45%', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
           <Container
             fitHeight
             header={
@@ -894,7 +887,7 @@ export default function AgentsListPage() {
             <div
               role="region"
               aria-label="Agent Builder Chat"
-              style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 220px)' }}
+              style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 260px)' }}
             >
               {chatError && (
                 <Alert type="error" dismissible onDismiss={() => setChatError('')}>

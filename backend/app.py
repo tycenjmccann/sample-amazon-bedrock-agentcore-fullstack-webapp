@@ -176,6 +176,16 @@ def list_memories(max_results: int = Query(default=50, le=100)):
         response = client.list_memories(maxResults=max_results)
         items = response.get("memories", [])
         for item in items:
+            # Enrich with details (name, memoryId)
+            mem_id = item.get("id", "")
+            item["memoryId"] = mem_id
+            if not item.get("name"):
+                try:
+                    detail = client.get_memory(memoryId=mem_id)
+                    mem_data = detail.get("memory", detail)
+                    item["name"] = mem_data.get("name", mem_id)
+                except Exception:
+                    item["name"] = mem_id
             for key in ("createdAt", "updatedAt"):
                 if key in item and hasattr(item[key], "isoformat"):
                     item[key] = item[key].isoformat()

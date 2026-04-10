@@ -698,6 +698,47 @@ def list_s3_buckets():
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
+@tool
+def list_knowledge_bases():
+    """List Bedrock Knowledge Bases in the account. Agents can use these for RAG (retrieval-augmented generation) to answer questions from real documents."""
+    import boto3
+    client = boto3.client("bedrock-agent", region_name=REGION)
+    try:
+        kbs = client.list_knowledge_bases(maxResults=20)
+        result = []
+        for kb in kbs.get("knowledgeBaseSummaries", []):
+            result.append({"name": kb.get("name"), "id": kb.get("knowledgeBaseId"), "status": kb.get("status"), "description": kb.get("description", "")})
+        return json.dumps({"knowledge_bases": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def list_sqs_queues():
+    """List SQS queues in the account. Agents can send messages to queues for ticket creation, task routing, etc."""
+    import boto3
+    client = boto3.client("sqs", region_name=REGION)
+    try:
+        queues = client.list_queues().get("QueueUrls", [])
+        result = [{"name": q.split("/")[-1], "url": q} for q in queues[:20]]
+        return json.dumps({"queues": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def list_sns_topics():
+    """List SNS topics in the account. Agents can publish notifications and alerts to these topics."""
+    import boto3
+    client = boto3.client("sns", region_name=REGION)
+    try:
+        topics = client.list_topics().get("Topics", [])
+        result = [{"name": t["TopicArn"].split(":")[-1], "arn": t["TopicArn"]} for t in topics[:20]]
+        return json.dumps({"topics": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 SYSTEM_PROMPT = """You are the AgentCore Builder — an AI assistant that helps users create, configure, and deploy AI agents, MCP gateways, and memory stores on Amazon Bedrock AgentCore.
 
 You have MEMORY of past conversations. If a user references a previous agent, gateway, or memory store, use your memory to recall the details.
@@ -707,11 +748,11 @@ You can:
 - Set up MCP gateways to connect agents to external APIs and services
 - Configure memory stores so agents remember context across sessions
 - Wire everything together: attach gateways and memory to agents
-- Discover AWS infrastructure (DynamoDB tables, Lambda functions, S3 buckets) to connect agents to real data
+- Discover AWS infrastructure (DynamoDB tables, Lambda functions, S3 buckets, Bedrock Knowledge Bases, SQS queues, SNS topics) to connect agents to real data and services
 
 When helping users:
 1. Ask clarifying questions to understand their use case
-2. **ALWAYS discover real infrastructure first** — call list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, or list_s3_buckets BEFORE generating any code.
+2. **ALWAYS discover real infrastructure first** — call list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets, list_knowledge_bases, list_sqs_queues, and list_sns_topics BEFORE generating any code.
 3. **Present a plan before coding** — After discovering resources, show the user:
    - What real AWS resources you found (table names, schemas, sample data)
    - Which tools you'll create and which real resource each tool will use
@@ -787,6 +828,7 @@ async def agent_invocation(payload):
             create_memory_store, list_memory_stores, check_memory_status, attach_memory_to_agent,
             # AWS infra discovery
             list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets,
+            list_knowledge_bases, list_sqs_queues, list_sns_topics,
             # Evaluation tools
             list_evaluators, run_evaluation,
         ],

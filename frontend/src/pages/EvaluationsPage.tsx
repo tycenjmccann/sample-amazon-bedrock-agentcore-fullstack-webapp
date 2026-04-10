@@ -186,27 +186,25 @@ export default function EvaluationsPage() {
               placeholder="Select evaluators"
             />
           </FormField>
-          <FormField
-            label={
-              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <span>Test Prompt</span>
+          <FormField label="Test Prompt">
+            <SpaceBetween size="xs">
+              <Textarea
+                value={testPrompt}
+                onChange={({ detail }) => setTestPrompt(detail.value)}
+                rows={2}
+                placeholder="Enter a test prompt or generate with AI..."
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <Button
-                  variant="inline-icon"
                   iconName="gen-ai"
                   onClick={handleGenerateTests}
                   loading={generating}
                   disabled={!selectedAgent}
-                  ariaLabel="Generate test prompts with AI"
-                />
-              </SpaceBetween>
-            }
-          >
-            <Textarea
-              value={testPrompt}
-              onChange={({ detail }) => setTestPrompt(detail.value)}
-              rows={2}
-              placeholder="Enter a test prompt or click ✨ to generate..."
-            />
+                >
+                  Generate Tests
+                </Button>
+              </div>
+            </SpaceBetween>
           </FormField>
         </ColumnLayout>
 

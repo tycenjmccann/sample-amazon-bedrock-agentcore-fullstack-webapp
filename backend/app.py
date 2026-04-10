@@ -402,7 +402,7 @@ def run_evaluation_endpoint(body: RunEvalRequest):
         # Get agent ARN
         agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
         arn = agent["agentRuntimeArn"]
-        session_id = f"eval_{uuid.uuid4().hex[:12]}"
+        session_id = f"eval_session_{uuid.uuid4().hex}"
 
         # Invoke the agent
         response = runtime.invoke_agent_runtime(

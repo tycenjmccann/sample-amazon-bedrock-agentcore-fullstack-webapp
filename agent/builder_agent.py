@@ -366,7 +366,7 @@ def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
 model = BedrockModel(model_id="global.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 # Opus model for high-quality code generation (used as a tool)
-CODEGEN_MODEL_ID = "anthropic.claude-opus-4-6-v1"
+CODEGEN_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 
 @tool
@@ -388,17 +388,65 @@ import json
 
 app = BedrockAgentCoreApp()
 
-# TOOLS GO HERE - each tool must:
-# 1. Use lazy init: create boto3 clients INSIDE the function, never at module level
-# 2. Have a docstring with Args section
-# 3. Return json.dumps(...)
-# 4. Be 20-40 lines max
+@tool
+def example_lookup(item_id: str):
+    """Look up an item from DynamoDB.
+    Args:
+        item_id: The item ID to look up
+    """
+    import boto3
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    table = ddb.Table('my-table')
+    resp = table.get_item(Key={'id': item_id})
+    return json.dumps(resp.get('Item', {"error": "Not found"}), default=str)
+
+@tool
+def example_scan(filter_value: str):
+    """Scan a table with a filter.
+    Args:
+        filter_value: Value to filter by
+    """
+    import boto3
+    from boto3.dynamodb.conditions import Attr
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    table = ddb.Table('my-table')
+    resp = table.scan(FilterExpression=Attr('field').eq(filter_value))
+    return json.dumps(resp.get('Items', []), default=str)
+
+@tool
+def example_update(item_id: str, new_status: str, reason: str):
+    """Update an item in DynamoDB.
+    Args:
+        item_id: Item to update
+        new_status: New status value
+        reason: Reason for the update
+    """
+    import boto3
+    ddb = boto3.resource('dynamodb', region_name='us-east-1')
+    table = ddb.Table('my-table')
+    table.update_item(
+        Key={'id': item_id},
+        UpdateExpression='SET #s = :s, reason = :r',
+        ExpressionAttributeNames={'#s': 'status'},
+        ExpressionAttributeValues={':s': new_status, ':r': reason}
+    )
+    return json.dumps({"status": "updated", "id": item_id})
+
+@tool
+def example_notify(channel: str, message: str, severity: str = "medium"):
+    """Send a notification (mock).
+    Args:
+        channel: Channel name
+        message: Message text
+        severity: low, medium, high, critical
+    """
+    return json.dumps({"status": "sent", "channel": channel, "message": message, "severity": severity})
 
 model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
 agent = Agent(
     model=model,
-    tools=[],  # list tool functions here
-    system_prompt="",  # agent instructions here
+    tools=[example_lookup, example_scan, example_update, example_notify],
+    system_prompt="""Your system prompt here.""",
     callback_handler=None,
 )
 

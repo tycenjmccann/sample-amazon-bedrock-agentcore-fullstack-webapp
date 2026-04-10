@@ -9,8 +9,6 @@ import json
 import logging
 import os
 import re
-import zipfile
-from io import BytesIO
 from typing import List, Optional
 
 import boto3
@@ -329,7 +327,17 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            yield f"data: {json.dumps(text)}\n\n"
+            # Stream the text in small chunks for a nice typing effect
+            import time
+            words = text.split(' ')
+            chunk = ''
+            for i, word in enumerate(words):
+                chunk += (' ' if chunk else '') + word
+                # Yield every 3-5 words for natural pacing
+                if len(chunk) > 20 or i == len(words) - 1:
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    chunk = ''
+                    time.sleep(0.02)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -631,187 +639,6 @@ async def agent_builder_chat(body: AgentBuilderChatRequest):
         )
     except Exception as e:
         logger.error(f"Agent builder chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class AgentDeployRequest(BaseModel):
-    agent_name: str
-    description: str
-    agent_code: str
-    model_id: Optional[str] = "us.anthropic.claude-sonnet-4-20250514-v1:0"
-
-
-@app.post("/api/agent-builder/deploy")
-def agent_builder_deploy(body: AgentDeployRequest):
-    """Deploy an agent to AgentCore Runtime.
-
-    Creates a zip artifact from the generated agent code and calls
-    the AgentCore CreateAgentRuntime API.
-    """
-    try:
-        # Sanitize agent name for use as a runtime name
-        safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", body.agent_name.strip())
-        safe_name = re.sub(r"_+", "_", safe_name).strip("_")[:48]
-        if not safe_name or not safe_name[0].isalpha():
-            safe_name = "agent_" + safe_name
-
-        # Create a zip artifact containing the agent code
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("strands_agent.py", body.agent_code)
-
-            # Add a requirements.txt with the necessary dependencies
-            requirements = (
-                "strands-agents\n"
-                "strands-agents-tools\n"
-                "bedrock-agentcore\n"
-                "bedrock-agentcore-starter-toolkit\n"
-                "boto3\n"
-            )
-            zf.writestr("requirements.txt", requirements)
-
-            # Add a setup script to pre-install deps before the runtime starts
-            setup_script = (
-                "#!/bin/bash\n"
-                "pip install -q -r requirements.txt\n"
-            )
-            zf.writestr("setup.sh", setup_script)
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.read()
-
-        # Upload the zip artifact to S3 so AgentCore can access it
-        s3_client = boto3.client("s3", region_name=REGION)
-        sts = boto3.client("sts", region_name=REGION)
-        account_id = sts.get_caller_identity()["Account"]
-
-        artifact_bucket = os.environ.get("AGENTCORE_ARTIFACT_BUCKET", "")
-        if not artifact_bucket:
-            artifact_bucket = f"agentcore-artifacts-{account_id}-{REGION}"
-            # Ensure the bucket exists
-            try:
-                s3_client.head_bucket(Bucket=artifact_bucket)
-            except ClientError as bucket_err:
-                error_code = bucket_err.response.get("Error", {}).get("Code", "")
-                http_status = bucket_err.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
-                if http_status != 404 and error_code != "404" and error_code != "NoSuchBucket":
-                    raise
-                create_kwargs = {"Bucket": artifact_bucket}
-                if REGION != "us-east-1":
-                    create_kwargs["CreateBucketConfiguration"] = {
-                        "LocationConstraint": REGION
-                    }
-                s3_client.create_bucket(**create_kwargs)
-                logger.info(f"Created S3 bucket: {artifact_bucket}")
-
-        artifact_key = f"agent-builder/{safe_name}/{safe_name}.zip"
-        s3_client.put_object(
-            Bucket=artifact_bucket,
-            Key=artifact_key,
-            Body=zip_bytes,
-        )
-        logger.info(f"Agent artifact uploaded to s3://{artifact_bucket}/{artifact_key}")
-
-        # Deploy to AgentCore using the control plane API
-        client = get_control_client()
-
-        # Get the account's default role ARN for agent runtimes
-        # The user needs to have set up an AgentCore execution role
-        role_arn = os.environ.get("AGENTCORE_EXECUTION_ROLE_ARN", "")  
-        if not role_arn:
-            # Look up role from an existing agent runtime
-            try:
-                existing = client.list_agent_runtimes(maxResults=1)
-                runtimes = existing.get("agentRuntimes", [])
-                if runtimes:
-                    existing_detail = client.get_agent_runtime(agentRuntimeId=runtimes[0]["agentRuntimeId"])
-                    role_arn = existing_detail.get("roleArn", "")
-            except Exception:
-                pass
-        if not role_arn:
-            raise HTTPException(status_code=400, detail="No AGENTCORE_EXECUTION_ROLE_ARN configured and no existing agent to copy role from")
-
-        create_params = {
-            "agentRuntimeName": safe_name,
-            "description": body.description or f"Agent created via Agent Builder: {safe_name}",
-            "agentRuntimeArtifact": {
-                "codeConfiguration": {
-                    "code": {
-                        "s3": {
-                            "bucket": artifact_bucket,
-                            "prefix": artifact_key,
-                        },
-                    },
-                    "runtime": "PYTHON_3_13",
-                    "entryPoint": ["strands_agent.py"],
-                },
-            },
-            "roleArn": role_arn,
-            "networkConfiguration": {
-                "networkMode": "PUBLIC",
-            },
-        }
-
-        # If AGENTCORE_SUBNET_IDS and AGENTCORE_SECURITY_GROUP_IDS are set, use CUSTOMER_VPC mode
-        subnet_ids = os.environ.get("AGENTCORE_SUBNET_IDS", "")
-        sg_ids = os.environ.get("AGENTCORE_SECURITY_GROUP_IDS", "")
-        if subnet_ids and sg_ids:
-            create_params["networkConfiguration"] = {
-                "networkMode": "VPC",
-                "networkModeConfig": {
-                    "subnets": [s.strip() for s in subnet_ids.split(",")],
-                    "securityGroups": [s.strip() for s in sg_ids.split(",")],
-                },
-            }
-
-        response = client.create_agent_runtime(**create_params)
-        response.pop("ResponseMetadata", None)
-
-        # Convert datetimes
-        for key in ("createdAt", "lastUpdatedAt"):
-            if key in response and hasattr(response[key], "isoformat"):
-                response[key] = response[key].isoformat()
-
-        return {
-            "status": "deploying",
-            "agentRuntimeId": response.get("agentRuntimeId"),
-            "agentRuntimeName": safe_name,
-            "artifactS3Uri": f"s3://{artifact_bucket}/{artifact_key}",
-            "message": f"Agent '{safe_name}' is being deployed to AgentCore Runtime.",
-            "response": response,
-        }
-    except ClientError as e:
-        error_code = e.response["Error"]["Code"]
-        error_message = e.response["Error"]["Message"]
-        logger.error(f"AgentCore deploy error: {error_code} - {error_message}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Deployment failed: {error_message}",
-        )
-    except Exception as e:
-        logger.error(f"Agent deploy error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/agent-builder/deploy/{agent_runtime_id}/status")
-def agent_builder_deploy_status(agent_runtime_id: str):
-    """Check the deployment status of an agent runtime."""
-    try:
-        client = get_control_client()
-        response = client.get_agent_runtime(agentRuntimeId=agent_runtime_id)
-        response.pop("ResponseMetadata", None)
-        for key in ("createdAt", "lastUpdatedAt"):
-            if key in response and hasattr(response[key], "isoformat"):
-                response[key] = response[key].isoformat()
-        return {
-            "status": response.get("status", "UNKNOWN"),
-            "agentRuntimeId": agent_runtime_id,
-            "agentRuntimeName": response.get("agentRuntimeName"),
-            "detail": response,
-        }
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            raise HTTPException(status_code=404, detail="Agent runtime not found")
         raise HTTPException(status_code=500, detail=str(e))
 
 

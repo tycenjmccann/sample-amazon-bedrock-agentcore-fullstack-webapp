@@ -185,47 +185,43 @@ Deploy a memory-enabled version of the T&S agent. Test the cross-session recall 
 
 ---
 
-## Act 6: User-Level Policy Governance (5 min) ❌ NOT BUILT
+## Act 6: User-Level Policy Governance (5 min) ⚠️ UI EXISTS, NEEDS BACKEND WIRING
 
 ### What we're showing
 Cedar-based policies controlling agent behavior per user.
 
-### Gaps / HONEST ISSUES
-- ❌ **Cedar policies** — Not implemented. No Cedar policy engine configured.
-- ❌ **User toggle (John vs Jane)** — Not built in the UI.
-- ❌ **Gateway policy section** — Not configured.
-- ❌ **Authorization logging** — Not set up.
-- ❌ **Per-user tool permissions** — The agent doesn't check user identity before calling tools.
+### What already exists
+- ✅ **PersonaToggle component** — John (Tier 1 Moderator) / Jane (Tier 2 Moderator) toggle built
+- ✅ **Chat page uses it** — sends `persona` field in invoke request, placeholder shows "Ask as John (Tier 1 Moderator)..."
+- ✅ **PoliciesPage** — displays Cedar permit/forbid policies for Jane and John
+- ✅ **Backend policy API** — `list_policies`, `get_policy` endpoints exist and call AgentCore control plane
 
-### What would be needed
-1. Create a Cedar policy store (AgentCore supports this)
-2. Configure the gateway with Cedar authorization
-3. Build a user toggle in the chat UI that passes user identity
-4. Agent or gateway checks Cedar policies before executing tools
-5. Log authorization decisions to CloudWatch
+### Gaps
+- ⚠️ **Cedar policy engine not created** — Need to create a policy engine in AgentCore and add the Cedar policies
+- ⚠️ **Persona not enforced** — The `persona` field is sent but the agent/gateway doesn't check it against Cedar policies
+- ⚠️ **Authorization logging** — Not configured yet
 
-### Recommendation
-This is the biggest gap. Options:
-- **Build it** — Probably 2-4 hours of work to set up Cedar policies, user toggle, and authorization checks.
-- **Slide-only** — Show the Cedar policy syntax on a slide, explain the concept, skip the live demo.
-- **Partial demo** — Show the Cedar policy in the console, explain how it works, but don't do the live John/Jane toggle.
+### What's needed
+1. Create Cedar policy engine via AgentCore API
+2. Add permit/forbid policies for John and Jane
+3. Wire the persona from the chat request to the policy check (either in the agent code or via gateway authorization)
+4. Log authorization decisions to CloudWatch
 
 ---
 
 ## Summary: What's Ready vs What Needs Work
 
-| Act | Status | Effort to Fix |
-|-----|--------|---------------|
-| Act 1: Build Agent | ✅ Ready | Warm up pre-deployed agent |
-| Act 2: MCP Gateway | ⚠️ Mostly ready | Clarify gateway vs direct tool story |
-| Act 3: Swap Models | ⚠️ Needs fix | Update template to read MODEL_ID from env var (~30 min) |
-| Act 4: Evaluations | ⚠️ Partially ready | Pre-run evals, verify CloudWatch data (~1 hr) |
-| Act 5: Memory | ⚠️ Needs work | Deploy memory-enabled agent, update template (~1-2 hrs) |
-| Act 6: Policy Governance | ❌ Not built | Cedar setup + UI toggle (~2-4 hrs) |
+| Act | Status | What Exists | Remaining Work |
+|-----|--------|-------------|----------------|
+| Act 1: Build Agent | ✅ Ready | Builder + deploy + chat all working | Warm up pre-deployed agent |
+| Act 2: MCP Gateway | ✅ Mostly ready | Gateways with auth, AgentActivityPanel for tool viz | Agent uses direct tools not gateway (story clarification) |
+| Act 3: Swap Models | ⚠️ Small fix | Model swap UI exists in agent detail page | Template needs to read MODEL_ID from env var (~30 min) |
+| Act 4: Evaluations | ⚠️ Partially ready | Eval page with test plans, OTEL enabled | Pre-run evals for CloudWatch data (~1 hr) |
+| Act 5: Memory | ⚠️ Needs config | Memory page + stores exist, builder has memory | Deploy T&S agent with memory enabled (~1 hr) |
+| Act 6: Policy Governance | ⚠️ UI exists, needs backend | PersonaToggle (John/Jane), PoliciesPage with Cedar display, policy API endpoints | Wire persona to actual Cedar policy enforcement (~2 hrs) |
 
 ## Priority Order for Remaining Work
 1. **Act 3 fix** (30 min) — Template reads MODEL_ID from env var
-2. **Act 5 fix** (1-2 hrs) — Memory-enabled agent deployment
-3. **Act 4 polish** (1 hr) — Pre-run evals, verify CloudWatch
-4. **Act 6 build** (2-4 hrs) — Cedar policies + user toggle
-5. **Act 2 enhancement** (optional) — Agent actually using gateway MCP tools
+2. **Act 5 fix** (1 hr) — Deploy memory-enabled T&S agent
+3. **Act 6 wiring** (2 hrs) — Connect persona toggle to Cedar policy enforcement
+4. **Act 4 polish** (1 hr) — Pre-run evals, verify CloudWatch data

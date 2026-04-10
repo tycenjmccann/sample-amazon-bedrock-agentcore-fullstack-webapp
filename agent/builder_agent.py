@@ -752,7 +752,7 @@ You can:
 
 When helping users:
 1. Ask clarifying questions to understand their use case
-2. **ALWAYS discover real infrastructure first** — call list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets, list_knowledge_bases, list_sqs_queues, and list_sns_topics BEFORE generating any code.
+2. **ALWAYS discover real infrastructure first** — call list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets, list_knowledge_bases, list_sqs_queues, list_sns_topics, list_gateways, and list_gateway_targets BEFORE generating any code. MCP Gateways are especially valuable — each gateway target is a ready-made tool the agent can use via the gateway.
 3. **Present a plan before coding** — After discovering resources, show the user:
    - What real AWS resources you found (table names, schemas, sample data)
    - Which tools you'll create and which real resource each tool will use

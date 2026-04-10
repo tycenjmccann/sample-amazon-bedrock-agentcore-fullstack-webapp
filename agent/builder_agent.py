@@ -144,16 +144,243 @@ def check_agent_status(agent_runtime_id: str):
         return json.dumps({"error": str(e)})
 
 
+# ---------------------------------------------------------------------------
+# MCP Gateway Tools
+# ---------------------------------------------------------------------------
+
+@tool
+def create_gateway(name: str, description: str = ""):
+    """Create a new MCP Gateway on AgentCore. Gateways let agents connect to external tools and APIs with zero code.
+    
+    Args:
+        name: Name for the gateway (e.g. 'customer_data_gateway')
+        description: What this gateway is for
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.create_gateway(
+            name=name,
+            description=description or f"MCP Gateway: {name}",
+            protocolType="MCP",
+            authorizerType="NONE",
+        )
+        response.pop("ResponseMetadata", None)
+        for k in ("createdAt", "updatedAt"):
+            if k in response and hasattr(response[k], "isoformat"):
+                response[k] = response[k].isoformat()
+        return json.dumps({
+            "status": "success",
+            "gateway_id": response.get("gatewayId"),
+            "name": name,
+            "message": f"Gateway '{name}' created. Use create_gateway_target to add tools to it.",
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@tool
+def create_gateway_target(gateway_id: str, name: str, description: str, target_type: str = "lambda", lambda_arn: str = ""):
+    """Add a tool target to an existing MCP Gateway. Each target becomes a tool the agent can call.
+    
+    Args:
+        gateway_id: The gateway ID to add the target to
+        name: Name for this tool target (e.g. 'order_lookup', 'send_notification')
+        description: What this tool does
+        target_type: Type of target - 'lambda' for Lambda functions
+        lambda_arn: ARN of the Lambda function (required for lambda targets)
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        params = {
+            "gatewayIdentifier": gateway_id,
+            "name": name,
+            "description": description or f"Tool target: {name}",
+        }
+        if target_type == "lambda" and lambda_arn:
+            params["targetConfiguration"] = {
+                "lambdaTarget": {"lambdaArn": lambda_arn}
+            }
+        response = client.create_gateway_target(**params)
+        response.pop("ResponseMetadata", None)
+        for k in ("createdAt", "updatedAt"):
+            if k in response and hasattr(response[k], "isoformat"):
+                response[k] = response[k].isoformat()
+        return json.dumps({
+            "status": "success",
+            "target_id": response.get("targetId"),
+            "name": name,
+            "message": f"Tool target '{name}' added to gateway {gateway_id}.",
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@tool
+def list_gateways():
+    """List all MCP Gateways in the account."""
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.list_gateways(maxResults=50)
+        gateways = []
+        for gw in response.get("items", []):
+            gateways.append({
+                "name": gw.get("name"),
+                "id": gw.get("gatewayId"),
+                "status": gw.get("status"),
+                "protocol": gw.get("protocolType"),
+            })
+        return json.dumps({"gateways": gateways})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def list_gateway_targets(gateway_id: str):
+    """List all tool targets for a specific gateway.
+    
+    Args:
+        gateway_id: The gateway ID to list targets for
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.list_gateway_targets(gatewayIdentifier=gateway_id, maxResults=50)
+        targets = []
+        for t in response.get("items", []):
+            targets.append({
+                "name": t.get("name"),
+                "id": t.get("targetId"),
+                "status": t.get("status"),
+                "description": t.get("description", ""),
+            })
+        return json.dumps({"targets": targets})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Memory Tools
+# ---------------------------------------------------------------------------
+
+@tool
+def create_memory_store(name: str, description: str = ""):
+    """Create a new AgentCore Memory store. Memory lets agents remember context across sessions.
+    
+    Args:
+        name: Name for the memory store (e.g. 'customer_prefs_memory')
+        description: What this memory store is for
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.create_memory(
+            name=name,
+            description=description or f"Memory store: {name}",
+        )
+        response.pop("ResponseMetadata", None)
+        for k in ("createdAt", "updatedAt"):
+            if k in response and hasattr(response[k], "isoformat"):
+                response[k] = response[k].isoformat()
+        mem_id = response.get("id") or response.get("memoryId")
+        return json.dumps({
+            "status": "creating",
+            "memory_id": mem_id,
+            "name": name,
+            "message": f"Memory store '{name}' is being created (ID: {mem_id}). It takes ~2 minutes to become ACTIVE. Use check_memory_status to monitor.",
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@tool
+def list_memory_stores():
+    """List all AgentCore Memory stores in the account."""
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.list_memories(maxResults=50)
+        memories = []
+        for m in response.get("memories", []):
+            memories.append({
+                "name": m.get("name", ""),
+                "id": m.get("id"),
+                "status": m.get("status"),
+            })
+        return json.dumps({"memories": memories})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def check_memory_status(memory_id: str):
+    """Check the status of a memory store.
+    
+    Args:
+        memory_id: The memory store ID to check
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.get_memory(memoryId=memory_id)
+        response.pop("ResponseMetadata", None)
+        return json.dumps({
+            "name": response.get("name", ""),
+            "id": response.get("id") or response.get("memoryId"),
+            "status": response.get("status"),
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
+    """Attach a memory store to an agent by setting the BEDROCK_AGENTCORE_MEMORY_ID environment variable.
+    
+    Args:
+        memory_id: The memory store ID to attach
+        agent_runtime_id: The agent runtime ID to attach it to
+    """
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        current = client.get_agent_runtime(agentRuntimeId=agent_runtime_id)
+        env = current.get("environmentVariables", {})
+        env["BEDROCK_AGENTCORE_MEMORY_ID"] = memory_id
+        client.update_agent_runtime(
+            agentRuntimeId=agent_runtime_id,
+            agentRuntimeArtifact=current["agentRuntimeArtifact"],
+            roleArn=current["roleArn"],
+            networkConfiguration=current["networkConfiguration"],
+            environmentVariables=env,
+        )
+        return json.dumps({
+            "status": "success",
+            "message": f"Memory store {memory_id} attached to agent {agent_runtime_id}. The agent will redeploy with memory enabled.",
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
 model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
 
-SYSTEM_PROMPT = """You are an Agent Builder — an AI assistant that helps users design, build, and deploy AI agents to Amazon Bedrock AgentCore.
+SYSTEM_PROMPT = """You are the AgentCore Builder — an AI assistant that helps users create, configure, and deploy AI agents, MCP gateways, and memory stores on Amazon Bedrock AgentCore.
 
-You have MEMORY of past conversations. If a user references a previous agent or conversation, use your memory to recall the details.
+You have MEMORY of past conversations. If a user references a previous agent, gateway, or memory store, use your memory to recall the details.
 
-When a user describes an agent they want:
-1. Understand their requirements (purpose, tools, model)
+You can:
+- Create and deploy agents with custom tools and system prompts
+- Set up MCP gateways to connect agents to external APIs and services
+- Configure memory stores so agents remember context across sessions
+- Wire everything together: attach gateways and memory to agents
+
+When helping users:
+1. Ask clarifying questions to understand their use case
 2. Generate complete, working Python agent code using the Strands SDK
-3. When they confirm, use the deploy_agent tool to deploy it
+3. Use your tools to create and configure resources
+4. After creating resources, offer to connect them (e.g., attach memory to an agent)
 
 CODE GENERATION RULES:
 - Always use `from strands import Agent, tool` for imports
@@ -162,9 +389,7 @@ CODE GENERATION RULES:
 - Default model: `us.anthropic.claude-sonnet-4-20250514-v1:0`
 - Tools should be decorated with `@tool` and MUST have docstrings with Args sections
 - Tool functions should return JSON strings using `json.dumps()`
-- The agent entrypoint should use `@app.entrypoint` decorator
 - Include `callback_handler=None` in the Agent constructor
-- The entrypoint function should be `async` and use `agent.stream_async()`
 
 AGENT NAMING RULES:
 - Must match: [a-zA-Z][a-zA-Z0-9_]{0,47}
@@ -173,24 +398,14 @@ AGENT NAMING RULES:
 
 When showing code, use ```python-deploy code blocks so the UI can display it in the code canvas and offer a deploy button.
 
-When the user confirms they want to deploy, include a special marker in your response:
+When the user confirms they want to deploy, include a special marker:
 ```agent-config
 {"agent_name": "<snake_case_name>", "description": "<description>"}
 ```
 
-Followed by the complete agent code in:
-```python-deploy
-<complete agent code here>
-```
-
 Then call the deploy_agent tool with the same code.
 
-You have these tools:
-- deploy_agent: Deploy an agent to AgentCore (takes agent_name, agent_code, requirements, description)
-- list_deployed_agents: List all deployed agents
-- check_agent_status: Check if a specific agent is READY
-
-Always show the generated code FIRST, then ask if the user wants to deploy. When they confirm, call deploy_agent."""
+For complex setups, work step by step: create the agent first, then the gateway, then memory, then wire them together."""
 
 
 @app.entrypoint
@@ -208,7 +423,11 @@ async def agent_invocation(payload):
 
     agent = Agent(
         model=model,
-        tools=[deploy_agent, list_deployed_agents, check_agent_status],
+        tools=[
+            deploy_agent, list_deployed_agents, check_agent_status,
+            create_gateway, create_gateway_target, list_gateways, list_gateway_targets,
+            create_memory_store, list_memory_stores, check_memory_status, attach_memory_to_agent,
+        ],
         system_prompt=SYSTEM_PROMPT,
         session_manager=session_manager,
         callback_handler=None,

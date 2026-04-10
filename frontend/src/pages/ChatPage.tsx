@@ -302,43 +302,16 @@ export default function ChatPage() {
   const getSupportPrompts = () => {
     if (messages.length === 0) {
       return [
-        { id: 'lookup', text: 'Look up user profile for user ID 12345' },
-        { id: 'metrics', text: "What are today's trust & safety metrics?" },
-        { id: 'flag', text: 'Flag content ID C-789 for harassment' },
-        { id: 'suspend', text: 'Suspend user 12345 for repeated harassment' },
+        { id: 'hello', text: 'Hello! What can you help me with?' },
+        { id: 'capabilities', text: 'What tools and capabilities do you have?' },
+        { id: 'example', text: 'Show me an example of what you can do' },
       ];
-    }
-
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage.type === 'agent') {
-      const content = lastMessage.content.toLowerCase();
-      if (content.includes('user') || content.includes('profile') || content.includes('violation')) {
-        return [
-          { id: 'flag-content', text: 'Flag their latest content for review' },
-          { id: 'check-metrics', text: 'Show me overall safety metrics' },
-          { id: 'suspend-user', text: 'Suspend this account for 7 days' },
-        ];
-      }
-      if (content.includes('flagged') || content.includes('flag')) {
-        return [
-          { id: 'notify', text: 'Notify the team via Slack' },
-          { id: 'escalate', text: 'Escalate to a senior moderator' },
-          { id: 'more-flags', text: 'Check for more content from this user' },
-        ];
-      }
-      if (content.includes('suspended') || content.includes('suspension')) {
-        return [
-          { id: 'slack-notify', text: 'Send Slack notification about this action' },
-          { id: 'daily-stats', text: 'Show daily moderation stats' },
-          { id: 'next-case', text: 'What other cases need review?' },
-        ];
-      }
     }
 
     return [
       { id: 'more', text: 'Tell me more' },
-      { id: 'metrics-default', text: 'Show safety metrics' },
-      { id: 'lookup-default', text: 'Look up a user' },
+      { id: 'next', text: 'What else can you do?' },
+      { id: 'help', text: 'Help me with something else' },
     ];
   };
 
@@ -356,7 +329,7 @@ export default function ChatPage() {
       header={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box variant="h3">
-            {selectedAgentData ? selectedAgentData.agentRuntimeName : 'Trust & Safety Content Moderation Agent'}
+            {selectedAgentData ? selectedAgentData.agentRuntimeName : 'Select an Agent'}
           </Box>
           <SpaceBetween direction="horizontal" size="xs" alignItems="center">
             <Box variant="span" fontSize="body-s" color="text-body-secondary">
@@ -382,10 +355,9 @@ export default function ChatPage() {
             {messages.length === 0 ? (
               <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
                 <SpaceBetween size="s">
-                  <Box variant="h3">Trust & Safety Content Moderation Agent</Box>
+                  <Box variant="h3">{selectedAgentData?.agentRuntimeName || 'Agent Chat'}</Box>
                   <Box>
-                    Investigate reports, review user profiles, flag content, and take enforcement
-                    actions. Start by selecting a prompt below or typing your own.
+                    {selectedAgentData?.description || 'Select an agent above, then ask a question or choose a prompt below to get started.'}
                   </Box>
                 </SpaceBetween>
               </Box>
@@ -402,8 +374,8 @@ export default function ChatPage() {
                     >
                       {isAgent && (
                         <Avatar
-                          ariaLabel="Trust & Safety Agent"
-                          tooltipText="Trust & Safety Agent"
+                          ariaLabel="Agent"
+                          tooltipText="Agent"
                           iconName="gen-ai"
                           color="gen-ai"
                         />
@@ -554,8 +526,8 @@ export default function ChatPage() {
                 {loading && (
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                     <Avatar
-                      ariaLabel="Trust & Safety Agent"
-                      tooltipText="Trust & Safety Agent"
+                      ariaLabel="Agent"
+                      tooltipText="Agent"
                       iconName="gen-ai"
                       color="gen-ai"
                       loading={true}

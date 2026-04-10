@@ -254,6 +254,18 @@ export default function AgentsListPage() {
         setChatError(error);
         setLoading(false);
         setStreamingContent('');
+        // Add a synthetic assistant message to preserve alternating user/assistant roles
+        // for the Bedrock Converse API. Without this, an orphaned user message would cause
+        // consecutive user-role entries on the next send, triggering a ValidationException.
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'assistant',
+            content: 'Sorry, I encountered an error processing your request. Please try again.',
+            timestamp: new Date(),
+            isSystem: true,
+          },
+        ]);
       },
     );
   };

@@ -57,7 +57,7 @@ export default function EvaluationsPage() {
   const [testPrompt, setTestPrompt] = useState('Hello! What can you help me with?');
   const [running, setRunning] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [suggestedPrompts, setSuggestedPrompts] = useState<{prompt: string; description: string}[]>([]);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<{prompt: string; description: string; evaluators?: string[]; reasoning?: string}[]>([]);
   const [error, setError] = useState('');
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
 
@@ -85,6 +85,10 @@ export default function EvaluationsPage() {
       setSuggestedPrompts(data.prompts || []);
       if (data.prompts?.length > 0) {
         setTestPrompt(data.prompts[0].prompt);
+        // Auto-select evaluators from first suggestion
+        const evals = data.prompts[0].evaluators || [];
+        const matched = BUILTIN_EVALUATORS.filter((e) => evals.includes(e.value));
+        if (matched.length > 0) setSelectedEvaluators(matched);
       }
     } catch (err: any) {
       setError(err.message);
@@ -210,30 +214,50 @@ export default function EvaluationsPage() {
 
         {suggestedPrompts.length > 0 && (
           <div style={{ marginTop: '12px' }}>
-            <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>Suggested Tests</Box>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {suggestedPrompts.map((sp, i) => (
-                <div
-                  key={i}
-                  onClick={() => setTestPrompt(sp.prompt)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter') setTestPrompt(sp.prompt); }}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '16px',
-                    border: testPrompt === sp.prompt ? '2px solid #0972d3' : '1px solid #e9ebed',
-                    backgroundColor: testPrompt === sp.prompt ? '#f2f8fd' : '#fff',
-                    cursor: 'pointer',
-                    fontSize: '0.85em',
-                    maxWidth: '100%',
-                  }}
-                  title={sp.description}
-                >
-                  {sp.prompt.length > 80 ? sp.prompt.slice(0, 80) + '...' : sp.prompt}
-                </div>
-              ))}
-            </div>
+            <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>AI-Generated Test Plan</Box>
+            <SpaceBetween size="s">
+              {suggestedPrompts.map((sp, i) => {
+                const isActive = testPrompt === sp.prompt;
+                return (
+                  <div
+                    key={i}
+                    onClick={() => {
+                      setTestPrompt(sp.prompt);
+                      const evals = sp.evaluators || [];
+                      const matched = BUILTIN_EVALUATORS.filter((e) => evals.includes(e.value));
+                      if (matched.length > 0) setSelectedEvaluators(matched);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setTestPrompt(sp.prompt); }}
+                    style={{
+                      padding: '12px 16px',
+                      borderRadius: '8px',
+                      border: isActive ? '2px solid #0972d3' : '1px solid #e9ebed',
+                      backgroundColor: isActive ? '#f2f8fd' : '#fff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <SpaceBetween size="xxs">
+                      <Box fontWeight="bold" fontSize="body-s">Test {i + 1}: {sp.description}</Box>
+                      <Box fontSize="body-s" color="text-body-secondary">
+                        <em>"{sp.prompt.length > 100 ? sp.prompt.slice(0, 100) + '...' : sp.prompt}"</em>
+                      </Box>
+                      {sp.evaluators && sp.evaluators.length > 0 && (
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {sp.evaluators.map((ev) => (
+                            <Badge key={ev} color="blue">{ev.replace('Builtin.', '')}</Badge>
+                          ))}
+                        </div>
+                      )}
+                      {sp.reasoning && (
+                        <Box fontSize="body-s" color="text-body-secondary">{sp.reasoning}</Box>
+                      )}
+                    </SpaceBetween>
+                  </div>
+                );
+              })}
+            </SpaceBetween>
           </div>
         )}
       </Container>

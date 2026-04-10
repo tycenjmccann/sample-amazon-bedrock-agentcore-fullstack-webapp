@@ -364,12 +364,14 @@ def generate_test_prompt(body: GenerateTestRequest):
 
 {agent_context}
 
-Generate 3 diverse test prompts that would thoroughly test this agent's capabilities. Each prompt should exercise different tools or behaviors.
+Available evaluators: Builtin.Helpfulness, Builtin.Correctness, Builtin.Coherence, Builtin.Conciseness, Builtin.ResponseRelevance, Builtin.InstructionFollowing, Builtin.ToolSelectionAccuracy, Builtin.ToolParameterAccuracy, Builtin.Harmfulness, Builtin.Faithfulness
 
-Return ONLY a JSON array of objects with "prompt" and "description" fields. No other text.
-Example: [{{"prompt": "...", "description": "Tests X capability"}}]"""}],
+Generate 3 diverse test prompts that would thoroughly test this agent's capabilities. For each test, select the most relevant evaluators (2-4 per test) and explain your reasoning.
+
+Return ONLY a JSON array. No other text. Format:
+[{{"prompt": "...", "description": "What this tests", "evaluators": ["Builtin.X", "Builtin.Y"], "reasoning": "Why these evaluators: ..."}}]"""}],
             }],
-            inferenceConfig={"maxTokens": 500},
+            inferenceConfig={"maxTokens": 800},
         )
         text = response["output"]["message"]["content"][0]["text"]
         # Extract JSON from response

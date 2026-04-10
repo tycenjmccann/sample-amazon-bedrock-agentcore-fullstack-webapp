@@ -329,7 +329,7 @@ export default function ChatPage() {
       header={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box variant="h3">
-            {selectedAgentData ? selectedAgentData.agentRuntimeName : 'Select an Agent'}
+            {selectedAgentData ? selectedAgentData.agentRuntimeName : 'Select an agent'}
           </Box>
           <SpaceBetween direction="horizontal" size="xs" alignItems="center">
             <Box variant="span" fontSize="body-s" color="text-body-secondary">
@@ -355,9 +355,11 @@ export default function ChatPage() {
             {messages.length === 0 ? (
               <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
                 <SpaceBetween size="s">
-                  <Box variant="h3">{selectedAgentData?.agentRuntimeName || 'Agent Chat'}</Box>
+                  <Box fontSize="display-l">💬</Box>
                   <Box>
-                    {selectedAgentData?.description || 'Select an agent above, then ask a question or choose a prompt below to get started.'}
+                    {selectedAgentData
+                      ? `Ask ${selectedAgentData.agentRuntimeName} anything, or pick a prompt below.`
+                      : 'Select an agent above to start chatting.'}
                   </Box>
                 </SpaceBetween>
               </Box>
@@ -538,21 +540,24 @@ export default function ChatPage() {
               </div>
             )}
 
-            {showSupportPrompts && !loading && (
-              <SupportPromptGroup
-                onItemClick={({ detail }) =>
-                  handleSupportPromptClick(
-                    getSupportPrompts().find((p) => p.id === detail.id)?.text || '',
-                  )
-                }
-                ariaLabel="Suggested prompts"
-                alignment="horizontal"
-                items={getSupportPrompts()}
-              />
-            )}
           </SpaceBetween>
           <div ref={chatEndRef} />
         </div>
+
+        {showSupportPrompts && !loading && (
+          <div style={{ paddingBottom: '8px' }}>
+            <SupportPromptGroup
+              onItemClick={({ detail }) =>
+                handleSupportPromptClick(
+                  getSupportPrompts().find((p) => p.id === detail.id)?.text || '',
+                )
+              }
+              ariaLabel="Suggested prompts"
+              alignment="horizontal"
+              items={getSupportPrompts()}
+            />
+          </div>
+        )}
 
         <PromptInput
           value={prompt}
@@ -571,7 +576,6 @@ export default function ChatPage() {
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        description="Chat with your AgentCore agents"
         actions={
           <SpaceBetween direction="horizontal" size="m" alignItems="center">
             <PersonaToggle activePersona={activePersona} onChange={setActivePersona} />

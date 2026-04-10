@@ -296,14 +296,40 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             if stream is None:
                 yield "data: No response\n\n"
                 return
-            if hasattr(stream, "iter_chunks"):
-                for chunk in stream.iter_chunks():
-                    text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
-                    yield f"data: {json.dumps(text)}\n\n"
-            elif hasattr(stream, "read"):
+            # Read the full response
+            if hasattr(stream, "read"):
                 data = stream.read()
-                text = data.decode("utf-8") if isinstance(data, bytes) else str(data)
-                yield f"data: {json.dumps(text)}\n\n"
+                raw = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+            elif hasattr(stream, "iter_chunks"):
+                parts = []
+                for chunk in stream.iter_chunks():
+                    parts.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+                raw = "".join(parts)
+            else:
+                raw = str(stream)
+
+            # Parse the AgentCore response to extract just the text
+            # Format: {"response": "{'role': 'assistant', 'content': [{'text': '...'}]}"}
+            text = raw
+            try:
+                outer = json.loads(raw)
+                if isinstance(outer, dict) and "response" in outer:
+                    inner = outer["response"]
+                    # inner is a Python repr string, try to parse it
+                    import ast
+                    try:
+                        parsed = ast.literal_eval(inner)
+                        if isinstance(parsed, dict) and "content" in parsed:
+                            for block in parsed["content"]:
+                                if isinstance(block, dict) and "text" in block:
+                                    text = block["text"]
+                                    break
+                    except (ValueError, SyntaxError):
+                        text = inner
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            yield f"data: {json.dumps(text)}\n\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 

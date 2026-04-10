@@ -300,16 +300,11 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
                 for line in stream._raw_stream:
                     text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
                     text = text.strip()
+                    if not text:
+                        continue
                     if text.startswith("data: "):
-                        payload = text[6:]
-                        try:
-                            parsed = json.loads(payload)
-                            if isinstance(parsed, str):
-                                yield f"data: {json.dumps(parsed)}\n\n"
-                                continue
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                        yield f"data: {json.dumps(payload)}\n\n"
+                        # Forward SSE events directly
+                        yield text + "\n\n"
                 return
 
             # Fallback: read all at once (non-streaming agents)

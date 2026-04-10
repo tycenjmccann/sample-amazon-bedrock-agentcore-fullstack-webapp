@@ -317,6 +317,107 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
 
 
 # ---------------------------------------------------------------------------
+# Evaluations
+# ---------------------------------------------------------------------------
+
+@app.get("/api/evaluators")
+def list_evaluators_endpoint():
+    """List all available evaluators."""
+    try:
+        client = get_control_client()
+        response = client.list_evaluators(maxResults=50)
+        evals = response.get("evaluators", [])
+        return {"evaluators": evals}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RunEvalRequest(BaseModel):
+    agent_runtime_id: str
+    test_prompt: str
+    evaluator_ids: list
+
+
+@app.post("/api/evaluate")
+def run_evaluation_endpoint(body: RunEvalRequest):
+    """Run on-demand evaluation on a deployed agent."""
+    import uuid
+    import time
+
+    try:
+        control = get_control_client()
+        runtime = get_runtime_client()
+
+        # Get agent ARN
+        agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
+        arn = agent["agentRuntimeArn"]
+        session_id = f"eval_{uuid.uuid4().hex[:12]}"
+
+        # Invoke the agent
+        response = runtime.invoke_agent_runtime(
+            agentRuntimeArn=arn,
+            qualifier="DEFAULT",
+            contentType="application/json",
+            accept="application/json",
+            runtimeSessionId=session_id,
+            payload=json.dumps({"prompt": body.test_prompt}).encode("utf-8"),
+        )
+        resp_body = response.get("response")
+        agent_response = ""
+        if resp_body and hasattr(resp_body, "read"):
+            data = resp_body.read()
+            agent_response = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+
+        time.sleep(3)  # Wait for OTEL spans
+
+        # Run evaluations
+        results = []
+        for eval_id in body.evaluator_ids[:5]:
+            try:
+                eval_response = runtime.evaluate(
+                    evaluatorId=eval_id,
+                    evaluationInput={
+                        "sessionSpans": [
+                            {
+                                "traceId": session_id,
+                                "spanId": f"span_{uuid.uuid4().hex[:8]}",
+                                "name": "agent_invocation",
+                                "startTimeUnixNano": str(int(time.time() * 1e9)),
+                                "endTimeUnixNano": str(int((time.time() + 5) * 1e9)),
+                                "attributes": [
+                                    {"key": "gen_ai.system", "value": {"stringValue": "aws.bedrock"}},
+                                    {"key": "gen_ai.prompt.0.content", "value": {"stringValue": body.test_prompt}},
+                                    {"key": "gen_ai.completion.0.content", "value": {"stringValue": agent_response}},
+                                ],
+                            }
+                        ]
+                    },
+                )
+                eval_response.pop("ResponseMetadata", None)
+                results.append({
+                    "evaluator": eval_id,
+                    "score": eval_response.get("score"),
+                    "reason": eval_response.get("reason", ""),
+                })
+            except Exception as eval_err:
+                results.append({
+                    "evaluator": eval_id,
+                    "score": None,
+                    "error": str(eval_err),
+                })
+
+        return {
+            "status": "complete",
+            "agent": body.agent_runtime_id,
+            "prompt": body.test_prompt,
+            "response_preview": agent_response[:500],
+            "results": results,
+        }
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 

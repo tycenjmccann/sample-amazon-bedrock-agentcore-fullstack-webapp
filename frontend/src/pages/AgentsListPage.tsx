@@ -1022,15 +1022,15 @@ export default function AgentsListPage() {
                     content: templatesContent,
                   },
                   {
+                    id: 'runtimes',
+                    label: `Runtime Agents${agents.length > 0 ? ` (${agents.length})` : ''}`,
+                    content: runtimeAgentsContent,
+                  },
+                  {
                     id: 'code',
                     label: `Code${canvas ? '' : ''}`,
                     content: codeCanvasContent,
                     disabled: !canvas,
-                  },
-                  {
-                    id: 'runtimes',
-                    label: `Runtime Agents${agents.length > 0 ? ` (${agents.length})` : ''}`,
-                    content: runtimeAgentsContent,
                   },
                 ]}
               />

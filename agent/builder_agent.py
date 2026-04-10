@@ -366,6 +366,123 @@ def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
 
 model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
 
+
+# ---------------------------------------------------------------------------
+# Evaluation Tools
+# ---------------------------------------------------------------------------
+
+BUILTIN_EVALUATORS = [
+    "Builtin.Helpfulness", "Builtin.Correctness", "Builtin.Coherence",
+    "Builtin.Conciseness", "Builtin.Faithfulness", "Builtin.InstructionFollowing",
+    "Builtin.ResponseRelevance", "Builtin.ToolSelectionAccuracy", "Builtin.ToolParameterAccuracy",
+    "Builtin.Harmfulness", "Builtin.Refusal", "Builtin.GoalSuccessRate",
+]
+
+@tool
+def list_evaluators():
+    """List all available evaluators for agent evaluation. Returns built-in evaluators like Helpfulness, Correctness, Tool Selection Accuracy, etc."""
+    import boto3
+    client = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    try:
+        response = client.list_evaluators(maxResults=50)
+        evals = [{"id": e.get("evaluatorId"), "status": e.get("status")} for e in response.get("evaluators", [])]
+        return json.dumps({"evaluators": evals})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def run_evaluation(agent_runtime_id: str, test_prompt: str, evaluator_ids: list):
+    """Run an on-demand evaluation on a deployed agent. Invokes the agent with a test prompt, then evaluates the response using the specified evaluators.
+    
+    Args:
+        agent_runtime_id: The agent runtime ID to evaluate
+        test_prompt: The test prompt to send to the agent
+        evaluator_ids: List of evaluator IDs to use (e.g. ['Builtin.Helpfulness', 'Builtin.Correctness', 'Builtin.ToolSelectionAccuracy'])
+    """
+    import boto3
+    import uuid
+
+    control = boto3.client("bedrock-agentcore-control", region_name=REGION)
+    runtime = boto3.client("bedrock-agentcore", region_name=REGION)
+
+    try:
+        # Step 1: Get agent ARN
+        agent = control.get_agent_runtime(agentRuntimeId=agent_runtime_id)
+        arn = agent["agentRuntimeArn"]
+        session_id = f"eval_{uuid.uuid4().hex[:12]}"
+
+        # Step 2: Invoke the agent
+        response = runtime.invoke_agent_runtime(
+            agentRuntimeArn=arn,
+            qualifier="DEFAULT",
+            contentType="application/json",
+            accept="application/json",
+            runtimeSessionId=session_id,
+            payload=json.dumps({"prompt": test_prompt}).encode("utf-8"),
+        )
+        # Read the response
+        resp_body = response.get("response")
+        agent_response = ""
+        if resp_body and hasattr(resp_body, "read"):
+            data = resp_body.read()
+            agent_response = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+
+        # Step 3: Run evaluations
+        # For on-demand eval, we need the OTEL spans. Since the agent is on AgentCore Runtime
+        # with OTEL enabled, spans are in CloudWatch. We'll use the session ID to find them.
+        # But the evaluate() API needs raw spans. Let's try a simpler approach:
+        # construct minimal span data from what we know.
+        import time
+        time.sleep(3)  # Wait for spans to be written to CloudWatch
+
+        results = []
+        for eval_id in evaluator_ids[:5]:  # Max 5 evaluators per run
+            try:
+                eval_response = runtime.evaluate(
+                    evaluatorId=eval_id,
+                    evaluationInput={
+                        "sessionSpans": [
+                            {
+                                "traceId": session_id,
+                                "spanId": f"span_{uuid.uuid4().hex[:8]}",
+                                "name": "agent_invocation",
+                                "startTimeUnixNano": str(int(time.time() * 1e9)),
+                                "endTimeUnixNano": str(int((time.time() + 5) * 1e9)),
+                                "attributes": [
+                                    {"key": "gen_ai.system", "value": {"stringValue": "aws.bedrock"}},
+                                    {"key": "gen_ai.prompt.0.content", "value": {"stringValue": test_prompt}},
+                                    {"key": "gen_ai.completion.0.content", "value": {"stringValue": agent_response}},
+                                ],
+                            }
+                        ]
+                    },
+                )
+                eval_response.pop("ResponseMetadata", None)
+                score = eval_response.get("score")
+                reason = eval_response.get("reason", "")
+                results.append({
+                    "evaluator": eval_id,
+                    "score": score,
+                    "reason": reason,
+                })
+            except Exception as eval_err:
+                results.append({
+                    "evaluator": eval_id,
+                    "score": None,
+                    "error": str(eval_err),
+                })
+
+        return json.dumps({
+            "status": "complete",
+            "agent": agent_runtime_id,
+            "prompt": test_prompt,
+            "response_preview": agent_response[:300],
+            "results": results,
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
 # ---------------------------------------------------------------------------
 # AWS Infrastructure Discovery Tools
 # ---------------------------------------------------------------------------
@@ -514,6 +631,8 @@ async def agent_invocation(payload):
             create_memory_store, list_memory_stores, check_memory_status, attach_memory_to_agent,
             # AWS infra discovery
             list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets,
+            # Evaluation tools
+            list_evaluators, run_evaluation,
         ],
         system_prompt=SYSTEM_PROMPT,
         session_manager=session_manager,

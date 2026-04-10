@@ -257,13 +257,14 @@ export default function AgentsListPage() {
         // Add a synthetic assistant message to preserve alternating user/assistant roles
         // for the Bedrock Converse API. Without this, an orphaned user message would cause
         // consecutive user-role entries on the next send, triggering a ValidationException.
+        // NOTE: This must NOT have isSystem: true — system messages are filtered out when
+        // building apiMessages, which would defeat the purpose of this fix.
         setMessages((prev) => [
           ...prev,
           {
             type: 'assistant',
             content: 'Sorry, I encountered an error processing your request. Please try again.',
             timestamp: new Date(),
-            isSystem: true,
           },
         ]);
       },

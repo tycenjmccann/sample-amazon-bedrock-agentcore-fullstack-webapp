@@ -295,36 +295,21 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
                 yield "data: No response\n\n"
                 return
 
-            # Try to stream chunks as they arrive
-            if hasattr(stream, "iter_chunks"):
-                buffer = ""
-                for chunk in stream.iter_chunks():
-                    buffer += chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
-                    # Process complete lines from buffer
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        line = line.strip()
-                        if line.startswith("data: "):
-                            payload = line[6:]
-                            try:
-                                text = json.loads(payload)
-                                if isinstance(text, str):
-                                    yield f"data: {json.dumps(text)}\n\n"
-                                    continue
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                            yield f"data: {json.dumps(payload)}\n\n"
-                # Flush remaining buffer
-                if buffer.strip().startswith("data: "):
-                    payload = buffer.strip()[6:]
-                    try:
-                        text = json.loads(payload)
-                        if isinstance(text, str):
-                            yield f"data: {json.dumps(text)}\n\n"
-                            return
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                    yield f"data: {json.dumps(payload)}\n\n"
+            # Stream line-by-line for real-time delivery
+            if hasattr(stream, "iter_lines"):
+                for line in stream.iter_lines():
+                    text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+                    text = text.strip()
+                    if text.startswith("data: "):
+                        payload = text[6:]
+                        try:
+                            parsed = json.loads(payload)
+                            if isinstance(parsed, str):
+                                yield f"data: {json.dumps(parsed)}\n\n"
+                                continue
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        yield f"data: {json.dumps(payload)}\n\n"
                 return
 
             # Fallback: read all at once (non-streaming agents)

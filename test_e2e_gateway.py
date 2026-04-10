@@ -4,7 +4,7 @@ import boto3, json, requests, sys
 
 BUILDER_URL = "http://localhost:8082/invocations"
 REGION = "us-east-1"
-GW_NAME = "DateSparkEnterprise"
+GW_NAME = "DateSparkEnterpriseAuth"
 
 def call_builder(prompt, session_id="gw_test"):
     resp = requests.post(BUILDER_URL, json={"prompt": prompt, "session_id": session_id}, stream=True, timeout=180)

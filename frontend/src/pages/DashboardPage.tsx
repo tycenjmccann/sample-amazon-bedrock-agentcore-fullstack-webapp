@@ -115,7 +115,7 @@ export default function DashboardPage() {
             </Box>
           ) : (
             <SpaceBetween size="s">
-              {agents.slice(0, 5).map((agent) => (
+              {agents.map((agent) => (
                 <div
                   key={agent.agentRuntimeId}
                   style={{
@@ -145,13 +145,6 @@ export default function DashboardPage() {
                   </StatusIndicator>
                 </div>
               ))}
-              {agents.length > 5 && (
-                <Box textAlign="center">
-                  <Link onFollow={(e) => { e.preventDefault(); navigate('/agents'); }}>
-                    View all {agents.length} agents
-                  </Link>
-                </Box>
-              )}
             </SpaceBetween>
           )}
         </Container>

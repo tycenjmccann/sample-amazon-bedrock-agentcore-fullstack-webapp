@@ -87,20 +87,20 @@ export default function AgentDetailPage() {
   const loadGateways = async () => {
     setGatewaysLoading(true);
     try {
-      const gws = await listGateways();
       const ev = agent?.environmentVariables || {};
-      const gwUrl = ev.GATEWAY_URL || ev.gateway_url || '';
-      const gwId = ev.GATEWAY_ID || ev.gateway_id || ev.MCP_GATEWAY_ID || '';
-      let filtered = gws;
-      if (gwId) {
-        filtered = gws.filter((g) => g.gatewayId === gwId);
-      } else if (gwUrl) {
-        filtered = gws.filter((g) => gwUrl.includes(g.gatewayId));
+      const gwId = ev.GATEWAY_ID || ev.gateway_id || ev.MCP_GATEWAY_ID || ev.GATEWAY_URL || ev.gateway_url || '';
+      if (!gwId) {
+        // No gateway configured for this agent
+        setGateways([]);
+        setGatewayTargets([]);
+        setGatewaysLoading(false);
+        return;
       }
-      setGateways(filtered.length > 0 ? filtered : gws);
-      const targetGw = filtered.length > 0 ? filtered[0] : gws[0];
-      if (targetGw) {
-        const targets = await listGatewayTargets(targetGw.gatewayId);
+      const gws = await listGateways();
+      const filtered = gws.filter((g) => gwId.includes(g.gatewayId) || g.gatewayId === gwId);
+      setGateways(filtered);
+      if (filtered.length > 0) {
+        const targets = await listGatewayTargets(filtered[0].gatewayId);
         setGatewayTargets(targets);
       }
     } catch {

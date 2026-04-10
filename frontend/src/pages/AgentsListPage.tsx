@@ -6,7 +6,6 @@ import Box from '@cloudscape-design/components/box';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Alert from '@cloudscape-design/components/alert';
 import Badge from '@cloudscape-design/components/badge';
-import Grid from '@cloudscape-design/components/grid';
 import Tabs from '@cloudscape-design/components/tabs';
 import Button from '@cloudscape-design/components/button';
 import PromptInput from '@cloudscape-design/components/prompt-input';
@@ -107,6 +106,14 @@ interface DeploymentState {
   errorMessage?: string;
 }
 
+interface CanvasState {
+  code: string;
+  fileName: string;
+  agentName: string;
+  description: string;
+  isFromRuntime: boolean;
+}
+
 export default function AgentsListPage() {
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -123,6 +130,9 @@ export default function AgentsListPage() {
   const [filterText, setFilterText] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<AgentRuntimeSummary | null>(null);
   const [templateContext, setTemplateContext] = useState<string | undefined>(undefined);
+
+  // Canvas state for code editor panel
+  const [canvas, setCanvas] = useState<CanvasState | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -188,6 +198,17 @@ export default function AgentsListPage() {
       `I want to modify agent "${agent.agentRuntimeName}" (ID: ${agent.agentRuntimeId}). It's currently in ${agent.status} status. What changes would you like to make?`,
     );
     setTemplateContext(undefined);
+    // Reset deployment state so stale deploy actions don't appear on the canvas
+    setDeployment({ status: 'idle' });
+    // Load agent info into the canvas
+    setCanvas({
+      code: `# Agent: ${agent.agentRuntimeName}\n# Runtime ID: ${agent.agentRuntimeId}\n# Status: ${agent.status}\n${agent.description ? `# Description: ${agent.description}\n` : ''}\n# Use the chat to request modifications to this agent.\n# The assistant will generate updated code here.`,
+      fileName: 'strands_agent.py',
+      agentName: agent.agentRuntimeName,
+      description: agent.description || '',
+      isFromRuntime: true,
+    });
+    setActiveTabId('code');
   };
 
   const checkForDeployableCode = useCallback((content: string) => {
@@ -199,6 +220,16 @@ export default function AgentsListPage() {
         description: agentConfig.description,
         code,
       });
+      // Auto-populate the canvas with the generated code
+      setCanvas({
+        code,
+        fileName: 'strands_agent.py',
+        agentName: agentConfig.agent_name,
+        description: agentConfig.description,
+        isFromRuntime: false,
+      });
+      // Auto-switch to the Code tab
+      setActiveTabId('code');
     }
   }, []);
 
@@ -573,334 +604,410 @@ export default function AgentsListPage() {
     </SpaceBetween>
   );
 
-  return (
-    <SpaceBetween size="l">
-      <Header
-        variant="h1"
-        description="Create new agents or modify existing ones through conversation with a Bedrock-powered assistant"
+  // Code canvas content for the "Code" tab
+  const codeCanvasContent = canvas ? (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Canvas header with agent info and deploy button */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '12px',
+        }}
       >
-        Agent Builder
-      </Header>
-
-      <Grid gridDefinition={[{ colspan: 7 }, { colspan: 5 }]}>
-        {/* Left panel — Chat with Agent Configuration Agent */}
-        <Container
-          fitHeight
-          header={
-            <Header
-              variant="h3"
-              description="Powered by Amazon Bedrock &mdash; describe your agent and deploy it live"
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Box variant="span" fontWeight="bold">{canvas.agentName}</Box>
+          {canvas.isFromRuntime && <Badge color="grey">Runtime Agent</Badge>}
+          {deployment.status === 'ready' && <Badge color="green">Ready to deploy</Badge>}
+          {deployment.status === 'deploying' && <Badge color="blue">Deploying...</Badge>}
+          {deployment.status === 'polling' && <Badge color="blue">Deploying...</Badge>}
+          {deployment.status === 'success' && <Badge color="green">Deployed</Badge>}
+          {deployment.status === 'error' && <Badge color="red">Failed</Badge>}
+        </SpaceBetween>
+        <SpaceBetween direction="horizontal" size="xs">
+          {deployment.status === 'ready' && (
+            <Button variant="primary" onClick={handleDeploy}>
+              Deploy to AgentCore
+            </Button>
+          )}
+          {deployment.status === 'error' && deployment.code && (
+            <Button
+              variant="normal"
+              onClick={() =>
+                setDeployment((prev) => ({ ...prev, status: 'ready', errorMessage: undefined }))
+              }
             >
-              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <span>Agent Configuration Assistant</span>
-                {loading && <Badge color="blue">Streaming</Badge>}
-              </SpaceBetween>
-            </Header>
-          }
+              Retry
+            </Button>
+          )}
+        </SpaceBetween>
+      </div>
+
+      {/* Deploy status banner */}
+      {deployment.status !== 'idle' && deployment.status !== 'ready' && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: '6px',
+            border:
+              deployment.status === 'success'
+                ? '1px solid #037f0c'
+                : deployment.status === 'error'
+                  ? '1px solid #d91515'
+                  : '1px solid #0972d3',
+            backgroundColor:
+              deployment.status === 'success'
+                ? '#f2fcf3'
+                : deployment.status === 'error'
+                  ? '#fdf3f3'
+                  : '#f2f8fd',
+            marginBottom: '12px',
+          }}
         >
+          {deployment.status === 'deploying' && (
+            <StatusIndicator type="in-progress">
+              Deploying {deployment.agentName}...
+            </StatusIndicator>
+          )}
+          {deployment.status === 'polling' && (
+            <StatusIndicator type="in-progress">
+              Waiting for {deployment.agentName} to become ready...
+            </StatusIndicator>
+          )}
+          {deployment.status === 'success' && (
+            <StatusIndicator type="success">
+              {deployment.agentName} deployed successfully!
+            </StatusIndicator>
+          )}
+          {deployment.status === 'error' && (
+            <StatusIndicator type="error">
+              Deployment failed: {deployment.errorMessage}
+            </StatusIndicator>
+          )}
+        </div>
+      )}
+
+      {canvas.description && (
+        <Box variant="span" fontSize="body-s" color="text-body-secondary" margin={{ bottom: 'xs' }}>
+          {canvas.description}
+        </Box>
+      )}
+
+      {/* File tab bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          backgroundColor: '#232f3e',
+          color: '#ff9900',
+          padding: '6px 12px',
+          borderRadius: '8px 8px 0 0',
+          fontFamily: 'monospace',
+          fontSize: '0.85em',
+          gap: '12px',
+        }}
+      >
+        <span>{canvas.fileName}</span>
+      </div>
+
+      {/* Code content */}
+      <div
+        style={{
+          flex: 1,
+          backgroundColor: '#1e1e1e',
+          borderRadius: '0 0 8px 8px',
+          overflow: 'auto',
+          position: 'relative',
+        }}
+      >
+        <pre
+          style={{
+            margin: 0,
+            padding: '16px',
+            fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace",
+            fontSize: '0.85em',
+            lineHeight: '1.6',
+            color: '#d4d4d4',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          <code>{canvas.code}</code>
+        </pre>
+      </div>
+    </div>
+  ) : (
+    <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
+      <SpaceBetween size="s">
+        <Box fontSize="heading-m">No code yet</Box>
+        <Box>
+          Describe your agent in the chat or select a template to get started.
+          Generated code will appear here.
+        </Box>
+      </SpaceBetween>
+    </Box>
+  );
+
+  // Markdown components shared between messages and streaming content
+  const markdownComponents = {
+    code: ({ className, children }: any) => {
+      const inline = !className;
+      const lang = className?.replace('language-', '') || '';
+      if (lang === 'agent-config') {
+        return null;
+      }
+      if (lang === 'python-deploy') {
+        // In the chat, show a compact reference that points to the canvas
+        return (
           <div
-            role="region"
-            aria-label="Agent Builder Chat"
-            style={{ display: 'flex', flexDirection: 'column', minHeight: '500px' }}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              backgroundColor: '#232f3e',
+              color: '#ff9900',
+              fontFamily: 'monospace',
+              fontSize: '0.85em',
+              cursor: 'pointer',
+            }}
+            onClick={() => setActiveTabId('code')}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') setActiveTabId('code');
+            }}
           >
-            {chatError && (
-              <Alert type="error" dismissible onDismiss={() => setChatError('')}>
-                {chatError}
-              </Alert>
-            )}
+            View generated code in canvas &rarr;
+          </div>
+        );
+      }
+      return inline ? (
+        <code
+          style={{
+            backgroundColor: '#f4f4f4',
+            padding: '2px 6px',
+            borderRadius: '3px',
+            fontFamily: 'monospace',
+            fontSize: '0.9em',
+          }}
+        >
+          {children}
+        </code>
+      ) : (
+        <pre
+          style={{
+            backgroundColor: '#f4f4f4',
+            padding: '12px',
+            borderRadius: '6px',
+            overflow: 'auto',
+            fontFamily: 'monospace',
+            fontSize: '0.9em',
+          }}
+        >
+          <code className={className}>{children}</code>
+        </pre>
+      );
+    },
+    a: ({ children, href }: any) => (
+      <a
+        href={href}
+        style={{ color: '#0972d3' }}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {children}
+      </a>
+    ),
+    ul: ({ children }: any) => (
+      <ul style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+        {children}
+      </ul>
+    ),
+    ol: ({ children }: any) => (
+      <ol style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+        {children}
+      </ol>
+    ),
+    p: ({ children }: any) => (
+      <p style={{ marginTop: '8px', marginBottom: '8px' }}>{children}</p>
+    ),
+  };
 
-            {/* Deploy banner */}
-            {deployment.status !== 'idle' && (
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderRadius: '8px',
-                  border:
-                    deployment.status === 'success'
-                      ? '2px solid #037f0c'
-                      : deployment.status === 'error'
-                        ? '2px solid #d91515'
-                        : '2px solid #0972d3',
-                  backgroundColor:
-                    deployment.status === 'success'
-                      ? '#f2fcf3'
-                      : deployment.status === 'error'
-                        ? '#fdf3f3'
-                        : '#f2f8fd',
-                  marginBottom: '8px',
-                }}
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 60px)' }}>
+      <div style={{ padding: '0 0 12px 0' }}>
+        <Header
+          variant="h1"
+          description="Create new agents or modify existing ones through conversation with a Bedrock-powered assistant"
+        >
+          Agent Builder
+        </Header>
+      </div>
+
+      <div style={{ display: 'flex', flex: 1, gap: '16px', minHeight: 0 }}>
+        {/* Left panel — Chat */}
+        <div style={{ flex: '0 0 45%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Container
+            fitHeight
+            header={
+              <Header
+                variant="h3"
+                description="Powered by Amazon Bedrock"
               >
-                <SpaceBetween size="xs">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                      {deployment.status === 'ready' && (
-                        <>
-                          <StatusIndicator type="info">Ready to deploy</StatusIndicator>
-                          <Box variant="span" fontWeight="bold">{deployment.agentName}</Box>
-                        </>
-                      )}
-                      {deployment.status === 'deploying' && (
-                        <StatusIndicator type="in-progress">
-                          Deploying {deployment.agentName}...
-                        </StatusIndicator>
-                      )}
-                      {deployment.status === 'polling' && (
-                        <StatusIndicator type="in-progress">
-                          Waiting for {deployment.agentName} to become ready...
-                        </StatusIndicator>
-                      )}
-                      {deployment.status === 'success' && (
-                        <StatusIndicator type="success">
-                          {deployment.agentName} deployed successfully!
-                        </StatusIndicator>
-                      )}
-                      {deployment.status === 'error' && (
-                        <StatusIndicator type="error">
-                          Deployment failed: {deployment.errorMessage}
-                        </StatusIndicator>
-                      )}
-                    </SpaceBetween>
-                    {deployment.status === 'ready' && (
-                      <Button variant="primary" onClick={handleDeploy}>
-                        Deploy to AgentCore
-                      </Button>
-                    )}
-                    {deployment.status === 'error' && deployment.code && (
-                      <Button
-                        variant="normal"
-                        onClick={() =>
-                          setDeployment((prev) => ({ ...prev, status: 'ready', errorMessage: undefined }))
-                        }
-                      >
-                        Retry
-                      </Button>
-                    )}
-                  </div>
-                  {deployment.description && deployment.status === 'ready' && (
-                    <Box variant="span" fontSize="body-s" color="text-body-secondary">
-                      {deployment.description}
-                    </Box>
-                  )}
+                <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                  <span>Agent Configuration Assistant</span>
+                  {loading && <Badge color="blue">Streaming</Badge>}
                 </SpaceBetween>
-              </div>
-            )}
+              </Header>
+            }
+          >
+            <div
+              role="region"
+              aria-label="Agent Builder Chat"
+              style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 220px)' }}
+            >
+              {chatError && (
+                <Alert type="error" dismissible onDismiss={() => setChatError('')}>
+                  {chatError}
+                </Alert>
+              )}
 
-            <div style={{ flex: 1, overflowY: 'auto', maxHeight: '500px', paddingBottom: '16px' }}>
-              <SpaceBetween size="m">
-                {messages.length === 0 && !streamingContent ? (
-                  <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
-                    <SpaceBetween size="s">
-                      <Box fontSize="heading-l">What do you want to build?</Box>
-                      <Box>
-                        Describe your agent or start with a template from the right panel.
-                      </Box>
-                      <Box fontSize="body-s">
-                        Powered by Amazon Bedrock &mdash; your responses come from a real LLM, not
-                        canned text.
-                      </Box>
-                    </SpaceBetween>
-                  </Box>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {messages.map((message, index) => (
-                      <div
-                        key={index}
-                        style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}
-                      >
-                        {message.type === 'assistant' && (
+              <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '16px' }}>
+                <SpaceBetween size="m">
+                  {messages.length === 0 && !streamingContent ? (
+                    <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
+                      <SpaceBetween size="s">
+                        <Box fontSize="heading-l">What do you want to build?</Box>
+                        <Box>
+                          Describe your agent or start with a template from the right panel.
+                        </Box>
+                        <Box fontSize="body-s">
+                          Powered by Amazon Bedrock &mdash; your responses come from a real LLM, not
+                          canned text.
+                        </Box>
+                      </SpaceBetween>
+                    </Box>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      {messages.map((message, index) => (
+                        <div
+                          key={index}
+                          style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}
+                        >
+                          {message.type === 'assistant' && (
+                            <Avatar
+                              ariaLabel="Agent Configuration Assistant"
+                              tooltipText="Agent Configuration Assistant"
+                              iconName="gen-ai"
+                              color="gen-ai"
+                            />
+                          )}
+                          <div style={{ flex: 1 }}>
+                            <ChatBubble
+                              type={message.type === 'user' ? 'outgoing' : 'incoming'}
+                              ariaLabel={`${message.type === 'user' ? 'You' : 'Assistant'} message`}
+                              avatar={message.type === 'user' ? <div /> : undefined}
+                            >
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={markdownComponents}
+                              >
+                                {message.content}
+                              </ReactMarkdown>
+                            </ChatBubble>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Streaming content - shown while the assistant is generating */}
+                      {streamingContent && (
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                           <Avatar
                             ariaLabel="Agent Configuration Assistant"
                             tooltipText="Agent Configuration Assistant"
                             iconName="gen-ai"
                             color="gen-ai"
+                            loading={true}
                           />
-                        )}
-                        <div style={{ flex: 1 }}>
-                          <ChatBubble
-                            type={message.type === 'user' ? 'outgoing' : 'incoming'}
-                            ariaLabel={`${message.type === 'user' ? 'You' : 'Assistant'} message`}
-                            avatar={message.type === 'user' ? <div /> : undefined}
-                          >
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                code: ({ className, children }: any) => {
-                                  const inline = !className;
-                                  const lang = className?.replace('language-', '') || '';
-                                  if (lang === 'agent-config') {
-                                    return null;
-                                  }
-                                  if (lang === 'python-deploy') {
-                                    return (
-                                      <div style={{ position: 'relative' }}>
-                                        <div
-                                          style={{
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            backgroundColor: '#232f3e',
-                                            color: '#ff9900',
-                                            padding: '6px 12px',
-                                            borderRadius: '6px 6px 0 0',
-                                            fontFamily: 'monospace',
-                                            fontSize: '0.8em',
-                                          }}
-                                        >
-                                          <span>strands_agent.py (ready to deploy)</span>
-                                        </div>
-                                        <pre
-                                          style={{
-                                            backgroundColor: '#f4f4f4',
-                                            padding: '12px',
-                                            borderRadius: '0 0 6px 6px',
-                                            overflow: 'auto',
-                                            fontFamily: 'monospace',
-                                            fontSize: '0.9em',
-                                            marginTop: 0,
-                                          }}
-                                        >
-                                          <code>{children}</code>
-                                        </pre>
-                                      </div>
-                                    );
-                                  }
-                                  return inline ? (
-                                    <code
-                                      style={{
-                                        backgroundColor: '#f4f4f4',
-                                        padding: '2px 6px',
-                                        borderRadius: '3px',
-                                        fontFamily: 'monospace',
-                                        fontSize: '0.9em',
-                                      }}
-                                    >
-                                      {children}
-                                    </code>
-                                  ) : (
-                                    <pre
-                                      style={{
-                                        backgroundColor: '#f4f4f4',
-                                        padding: '12px',
-                                        borderRadius: '6px',
-                                        overflow: 'auto',
-                                        fontFamily: 'monospace',
-                                        fontSize: '0.9em',
-                                      }}
-                                    >
-                                      <code className={className}>{children}</code>
-                                    </pre>
-                                  );
-                                },
-                                a: ({ children, href }: any) => (
-                                  <a
-                                    href={href}
-                                    style={{ color: '#0972d3' }}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    {children}
-                                  </a>
-                                ),
-                                ul: ({ children }: any) => (
-                                  <ul style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-                                    {children}
-                                  </ul>
-                                ),
-                                ol: ({ children }: any) => (
-                                  <ol style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-                                    {children}
-                                  </ol>
-                                ),
-                                p: ({ children }: any) => (
-                                  <p style={{ marginTop: '8px', marginBottom: '8px' }}>{children}</p>
-                                ),
-                              }}
-                            >
-                              {message.content}
-                            </ReactMarkdown>
-                          </ChatBubble>
+                          <div style={{ flex: 1 }}>
+                            <ChatBubble type="incoming" ariaLabel="Assistant streaming response" avatar={<div />}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                                {streamingContent}
+                              </ReactMarkdown>
+                            </ChatBubble>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )}
 
-                    {/* Streaming content - shown while the assistant is generating */}
-                    {streamingContent && (
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                        <Avatar
-                          ariaLabel="Agent Configuration Assistant"
-                          tooltipText="Agent Configuration Assistant"
-                          iconName="gen-ai"
-                          color="gen-ai"
-                          loading={true}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <ChatBubble type="incoming" ariaLabel="Assistant streaming response" avatar={<div />}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {streamingContent}
-                            </ReactMarkdown>
-                          </ChatBubble>
+                      {/* Loading indicator before streaming starts */}
+                      {loading && !streamingContent && (
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <Avatar
+                            ariaLabel="Agent Configuration Assistant"
+                            tooltipText="Agent Configuration Assistant"
+                            iconName="gen-ai"
+                            color="gen-ai"
+                            loading={true}
+                          />
+                          <Box color="text-body-secondary">Thinking...</Box>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )}
+                </SpaceBetween>
+                <div ref={chatEndRef} />
+              </div>
 
-                    {/* Loading indicator before streaming starts */}
-                    {loading && !streamingContent && (
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                        <Avatar
-                          ariaLabel="Agent Configuration Assistant"
-                          tooltipText="Agent Configuration Assistant"
-                          iconName="gen-ai"
-                          color="gen-ai"
-                          loading={true}
-                        />
-                        <Box color="text-body-secondary">Thinking...</Box>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </SpaceBetween>
-              <div ref={chatEndRef} />
+              <PromptInput
+                value={prompt}
+                onChange={({ detail }) => setPrompt(detail.value)}
+                onAction={handleSendMessage}
+                placeholder="Describe your agent..."
+                actionButtonAriaLabel="Send message"
+                actionButtonIconName="send"
+                disabled={loading}
+              />
             </div>
+          </Container>
+        </div>
 
-            <PromptInput
-              value={prompt}
-              onChange={({ detail }) => setPrompt(detail.value)}
-              onAction={handleSendMessage}
-              placeholder="Describe your agent..."
-              actionButtonAriaLabel="Send message"
-              actionButtonIconName="send"
-              disabled={loading}
-            />
-          </div>
-        </Container>
-
-        {/* Right panel — Templates / Runtime Agents tabs */}
-        <Container
-          fitHeight
-          header={
-            <Header variant="h3">
-              Browse
-            </Header>
-          }
-        >
-          <Tabs
-            activeTabId={activeTabId}
-            onChange={({ detail }) => setActiveTabId(detail.activeTabId)}
-            tabs={[
-              {
-                id: 'templates',
-                label: 'Create New',
-                content: templatesContent,
-              },
-              {
-                id: 'runtimes',
-                label: `Runtime Agents${agents.length > 0 ? ` (${agents.length})` : ''}`,
-                content: runtimeAgentsContent,
-              },
-            ]}
-          />
-        </Container>
-      </Grid>
-    </SpaceBetween>
+        {/* Right panel — Code Canvas / Templates / Runtime Agents */}
+        <div style={{ flex: '1 1 55%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Container
+            fitHeight
+            header={
+              <Header variant="h3">
+                {activeTabId === 'code' ? canvas?.agentName || 'Code' : 'Browse'}
+              </Header>
+            }
+          >
+            <div style={{ height: 'calc(100vh - 220px)', display: 'flex', flexDirection: 'column' }}>
+              <Tabs
+                activeTabId={activeTabId}
+                onChange={({ detail }) => setActiveTabId(detail.activeTabId)}
+                tabs={[
+                  {
+                    id: 'templates',
+                    label: 'Create New',
+                    content: templatesContent,
+                  },
+                  {
+                    id: 'code',
+                    label: `Code${canvas ? '' : ''}`,
+                    content: codeCanvasContent,
+                    disabled: !canvas,
+                  },
+                  {
+                    id: 'runtimes',
+                    label: `Runtime Agents${agents.length > 0 ? ` (${agents.length})` : ''}`,
+                    content: runtimeAgentsContent,
+                  },
+                ]}
+              />
+            </div>
+          </Container>
+        </div>
+      </div>
+    </div>
   );
 }

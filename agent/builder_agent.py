@@ -430,7 +430,8 @@ def generate_agent_code(agent_name: str, description: str, tools_description: st
     """
     import boto3
 
-    TEMPLATE = '''from strands import Agent, tool
+    TEMPLATE = '''import os
+from strands import Agent, tool
 from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 import json
@@ -491,7 +492,7 @@ def example_notify(channel: str, message: str, severity: str = "medium"):
     """
     return json.dumps({"status": "sent", "channel": channel, "message": message, "severity": severity})
 
-model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+model = BedrockModel(model_id=os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 agent = Agent(
     model=model,
     tools=[example_lookup, example_scan, example_update, example_notify],

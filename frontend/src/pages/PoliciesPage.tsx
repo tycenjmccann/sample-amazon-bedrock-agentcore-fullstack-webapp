@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import Header from '@cloudscape-design/components/header';
 import Container from '@cloudscape-design/components/container';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -5,8 +6,26 @@ import Box from '@cloudscape-design/components/box';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import Badge from '@cloudscape-design/components/badge';
 import Alert from '@cloudscape-design/components/alert';
+import Button from '@cloudscape-design/components/button';
 
 export default function PoliciesPage() {
+  const [johnResult, setJohnResult] = useState<any>(null);
+  const [janeResult, setJaneResult] = useState<any>(null);
+
+  const callGateway = async (persona: string, toolName: string, args: Record<string, string>) => {
+    const setter = persona === 'john' ? setJohnResult : setJaneResult;
+    setter(null);
+    try {
+      const res = await fetch('/management/api/gateway/call-tool', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona, tool_name: toolName, arguments: args }),
+      });
+      setter(await res.json());
+    } catch (e: any) {
+      setter({ status: 'error', message: e.message });
+    }
+  };
+
   return (
     <SpaceBetween size="l">
       <Header
@@ -126,20 +145,44 @@ export default function PoliciesPage() {
         </ColumnLayout>
       </Container>
 
-      <Container header={<Header variant="h2">Try It</Header>}>
-        <SpaceBetween size="s">
+      <Container header={<Header variant="h2">Try It — Live Policy Enforcement</Header>}>
+        <SpaceBetween size="m">
           <Box variant="p">
-            Use the <strong>Chat</strong> page with the persona toggle to test policy governance:
+            Test Cedar policy enforcement in real-time. These buttons call the enterprise gateway with different user identities.
+            Cedar evaluates the policy and permits or denies the tool call.
           </Box>
-          <Box variant="p">
-            1. Toggle to <strong>John</strong> (Tier 1) and ask to suspend a user — the agent will refuse
-          </Box>
-          <Box variant="p">
-            2. Toggle to <strong>Jane</strong> (Tier 2) and ask the same — the agent will execute the suspension
-          </Box>
-          <Box variant="p">
-            3. Check CloudWatch for both authorization decisions logged side-by-side
-          </Box>
+          <ColumnLayout columns={2}>
+            <Container header={<Header variant="h3">John — Tier 1 Moderator</Header>}>
+              <SpaceBetween size="s">
+                <Button onClick={() => callGateway('john', 'SlackIntegration___post_message', {channel: '#trust-safety', message: 'Flagged user U-11111'})}>
+                  Post to Slack ✅
+                </Button>
+                <Button onClick={() => callGateway('john', 'JiraIntegration___create_ticket', {summary: 'Suspend user U-11111 for harassment'})}>
+                  Create Jira Ticket ❌
+                </Button>
+                {johnResult && (
+                  <Alert type={johnResult.status === 'allowed' ? 'success' : 'error'}>
+                    <strong>{johnResult.status === 'allowed' ? 'PERMITTED' : 'DENIED'}</strong>: {johnResult.message || JSON.stringify(johnResult.result?.content?.[0]?.text || johnResult.result)}
+                  </Alert>
+                )}
+              </SpaceBetween>
+            </Container>
+            <Container header={<Header variant="h3">Jane — Tier 2 Moderator</Header>}>
+              <SpaceBetween size="s">
+                <Button onClick={() => callGateway('jane', 'SlackIntegration___post_message', {channel: '#trust-safety', message: 'Flagged user U-11111'})}>
+                  Post to Slack ✅
+                </Button>
+                <Button onClick={() => callGateway('jane', 'JiraIntegration___create_ticket', {summary: 'Suspend user U-11111 for harassment'})}>
+                  Create Jira Ticket ✅
+                </Button>
+                {janeResult && (
+                  <Alert type={janeResult.status === 'allowed' ? 'success' : 'error'}>
+                    <strong>{janeResult.status === 'allowed' ? 'PERMITTED' : 'DENIED'}</strong>: {janeResult.message || JSON.stringify(janeResult.result?.content?.[0]?.text || janeResult.result)}
+                  </Alert>
+                )}
+              </SpaceBetween>
+            </Container>
+          </ColumnLayout>
         </SpaceBetween>
       </Container>
     </SpaceBetween>

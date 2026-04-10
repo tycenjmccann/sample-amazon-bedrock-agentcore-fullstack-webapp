@@ -366,7 +366,7 @@ def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
 model = BedrockModel(model_id="global.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 # Opus model for high-quality code generation (used as a tool)
-CODEGEN_MODEL_ID = "global.anthropic.claude-opus-4-6-v1"
+CODEGEN_MODEL_ID = "us.anthropic.claude-opus-4-6-v1"
 
 
 @tool

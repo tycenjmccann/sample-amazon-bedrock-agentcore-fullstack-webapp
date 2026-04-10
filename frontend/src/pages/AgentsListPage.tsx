@@ -154,6 +154,7 @@ export default function AgentsListPage() {
   }, [canvas]);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const sessionIdRef = useRef(`builder_${Date.now()}`);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -347,6 +348,7 @@ export default function AgentsListPage() {
           },
         ]);
       },
+      sessionIdRef.current,
     );
   };
 
@@ -355,7 +357,7 @@ export default function AgentsListPage() {
     setDeployment((prev) => ({ ...prev, status: 'deploying' }));
 
     // Send deploy request through the builder agent (uses CLI with pre-built deps)
-    const deployPrompt = `Deploy this agent now. Use the deploy_agent tool with:\n- agent_name: "${deployment.agentName}"\n- description: "${deployment.description || ''}"\n- requirements: "strands-agents\\nstrands-agents-tools\\nbedrock-agentcore\\nbedrock-agentcore-starter-toolkit\\nboto3\\n"\n- agent_code: the code from the canvas (I'll paste it below)\n\n\`\`\`python\n${deployment.code}\n\`\`\``;
+    const deployPrompt = `Deploy this agent now. Use the deploy_agent tool with:\n- agent_name: "${deployment.agentName}"\n- description: "${deployment.description || ''}"\n- requirements: "strands-agents\\nstrands-agents-tools\\nbedrock-agentcore\\nboto3\\n"\n- agent_code: the code from the canvas (I'll paste it below)\n\n\`\`\`python\n${deployment.code}\n\`\`\``;
 
     setMessages((prev) => [
       ...prev,
@@ -383,6 +385,7 @@ export default function AgentsListPage() {
         setDeployment((prev) => ({ ...prev, status: 'error', errorMessage: error }));
         setStreamingContent('');
       },
+      sessionIdRef.current,
     );
   };
 
@@ -889,6 +892,19 @@ export default function AgentsListPage() {
         <Header
           variant="h1"
           description="Create new agents or modify existing ones through conversation with a Bedrock-powered assistant"
+          actions={
+            messages.length > 0 ? (
+              <Button onClick={() => {
+                setMessages([]);
+                setCanvas(null);
+                setStreamingContent('');
+                setDeployment({ status: 'idle' });
+                sessionIdRef.current = `builder_${Date.now()}`;
+                appState.setBuilderMessages([]);
+                appState.setBuilderCanvas(null);
+              }}>New Chat</Button>
+            ) : undefined
+          }
         >
           Agent Builder
         </Header>

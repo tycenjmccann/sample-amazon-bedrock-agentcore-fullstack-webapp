@@ -22,6 +22,7 @@ export async function streamAgentBuilderChat(
   onText: (text: string) => void,
   onDone: () => void,
   onError: (error: string) => void,
+  sessionId?: string,
 ): Promise<void> {
   try {
     // Try the real builder agent first
@@ -33,7 +34,7 @@ export async function streamAgentBuilderChat(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        session_id: 'builder_session_default',
+        session_id: sessionId || `builder_${Date.now()}`,
       }),
     });
 

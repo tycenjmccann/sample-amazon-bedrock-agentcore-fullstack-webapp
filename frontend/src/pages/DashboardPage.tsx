@@ -9,35 +9,18 @@ import Button from '@cloudscape-design/components/button';
 import Alert from '@cloudscape-design/components/alert';
 import Link from '@cloudscape-design/components/link';
 import { useNavigate } from 'react-router-dom';
-import { listAgents, AgentRuntimeSummary } from '../api/agents';
-import { listGateways, GatewaySummary } from '../api/gateways';
-import { listMemories, MemorySummary } from '../api/memory';
+import { useAppState } from '../context/AppContext';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [agents, setAgents] = useState<AgentRuntimeSummary[]>([]);
-  const [gateways, setGateways] = useState<GatewaySummary[]>([]);
-  const [memories, setMemories] = useState<MemorySummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { agents, gateways, memories, dataLoaded, loadData } = useAppState();
   const [error, setError] = useState('');
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      setError('');
-      try {
-        const [a, g, m] = await Promise.allSettled([listAgents(), listGateways(), listMemories()]);
-        if (a.status === 'fulfilled') setAgents(a.value);
-        if (g.status === 'fulfilled') setGateways(g.value);
-        if (m.status === 'fulfilled') setMemories(m.value);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
+    if (!dataLoaded) loadData().catch((e) => setError(e.message));
+  }, [dataLoaded, loadData]);
+
+  const loading = !dataLoaded;
 
   const readyAgents = agents.filter((a) => a.status === 'READY').length;
 

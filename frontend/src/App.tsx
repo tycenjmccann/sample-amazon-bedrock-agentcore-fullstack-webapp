@@ -161,10 +161,14 @@ function AppContent() {
   );
 }
 
+import { AppProvider } from './context/AppContext';
+
 function App() {
   return (
     <BrowserRouter>
-      <AppContent />
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
     </BrowserRouter>
   );
 }

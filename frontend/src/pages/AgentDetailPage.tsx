@@ -546,7 +546,7 @@ export default function AgentDetailPage() {
     <SpaceBetween size="l">
       <BreadcrumbGroup
         items={[
-          { text: 'Agents', href: '/agents' },
+          { text: 'Agents', href: '/agents/list' },
           { text: agent.agentRuntimeName, href: '#' },
         ]}
         onFollow={(event) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
@@ -7,16 +7,17 @@ import Link from '@cloudscape-design/components/link';
 import Table from '@cloudscape-design/components/table';
 import Button from '@cloudscape-design/components/button';
 import { useNavigate } from 'react-router-dom';
-import { listAgents, AgentRuntimeSummary } from '../api/agents';
+import { useAppState } from '../context/AppContext';
 
 export default function AgentsPage() {
   const navigate = useNavigate();
-  const [agents, setAgents] = useState<AgentRuntimeSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { agents, dataLoaded, loadData } = useAppState();
 
   useEffect(() => {
-    listAgents().then(setAgents).finally(() => setLoading(false));
-  }, []);
+    if (!dataLoaded) loadData();
+  }, [dataLoaded, loadData]);
+
+  const loading = !dataLoaded;
 
   return (
     <SpaceBetween size="l">

@@ -112,9 +112,15 @@ interface CanvasState {
   isFromRuntime: boolean;
 }
 
+import { useAppState } from '../context/AppContext';
+
 export default function AgentsListPage() {
+  const appState = useAppState();
   const [prompt, setPrompt] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Initialize from context so chat persists across navigation
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    appState.builderMessages.map(m => ({ ...m }))
+  );
   const [loading, setLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [chatError, setChatError] = useState('');
@@ -129,8 +135,23 @@ export default function AgentsListPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentRuntimeSummary | null>(null);
   const [templateContext, setTemplateContext] = useState<string | undefined>(undefined);
 
-  // Canvas state for code editor panel
-  const [canvas, setCanvas] = useState<CanvasState | null>(null);
+  // Canvas state - initialize from context
+  const [canvas, setCanvas] = useState<CanvasState | null>(() =>
+    appState.builderCanvas ? { ...appState.builderCanvas, fileName: 'strands_agent.py', isFromRuntime: false } : null
+  );
+
+  // Sync messages and canvas back to context when they change
+  useEffect(() => {
+    appState.setBuilderMessages(messages.map(m => ({
+      type: m.type, content: m.content, timestamp: m.timestamp, isSystem: m.isSystem,
+    })));
+  }, [messages]);
+
+  useEffect(() => {
+    if (canvas) {
+      appState.setBuilderCanvas({ code: canvas.code, agentName: canvas.agentName, description: canvas.description });
+    }
+  }, [canvas]);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 

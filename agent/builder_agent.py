@@ -588,6 +588,10 @@ CODE GENERATION RULES:
 - Tools should be decorated with `@tool` and MUST have docstrings with Args sections
 - Tool functions should return JSON strings using `json.dumps()`
 - Include `callback_handler=None` in the Agent constructor
+- KEEP TOOLS SIMPLE AND CONCISE — each tool should be 20-40 lines max, not 100+
+- Do NOT over-engineer tools with complex analysis logic — keep them as thin wrappers around DynamoDB queries
+- The LLM reasoning handles the analysis, tools just fetch and return data
+- Total agent code should be under 200 lines
 
 AGENT NAMING RULES:
 - Must match: [a-zA-Z][a-zA-Z0-9_]{0,47}

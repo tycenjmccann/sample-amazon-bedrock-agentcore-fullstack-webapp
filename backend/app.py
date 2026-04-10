@@ -294,7 +294,7 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             if stream is None:
                 yield "data: No response\n\n"
                 return
-            # Read the full response
+            # Read the response - may be streamed SSE or a single JSON blob
             if hasattr(stream, "read"):
                 data = stream.read()
                 raw = data.decode("utf-8") if isinstance(data, bytes) else str(data)
@@ -306,14 +306,30 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
             else:
                 raw = str(stream)
 
-            # Parse the AgentCore response to extract just the text
+            # Handle SSE-streamed responses (from streaming agents)
+            # Format: "data: \"chunk1\"\n\ndata: \"chunk2\"\n\n..."
+            if raw.startswith("data: "):
+                for line in raw.split("\n"):
+                    line = line.strip()
+                    if line.startswith("data: "):
+                        payload = line[6:]
+                        try:
+                            text = json.loads(payload)
+                            if isinstance(text, str):
+                                yield f"data: {json.dumps(text)}\n\n"
+                                continue
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        yield f"data: {json.dumps(payload)}\n\n"
+                return
+
+            # Handle single JSON blob responses (non-streaming agents)
             # Format: {"response": "{'role': 'assistant', 'content': [{'text': '...'}]}"}
             text = raw
             try:
                 outer = json.loads(raw)
                 if isinstance(outer, dict) and "response" in outer:
                     inner = outer["response"]
-                    # inner is a Python repr string, try to parse it
                     import ast
                     try:
                         parsed = ast.literal_eval(inner)

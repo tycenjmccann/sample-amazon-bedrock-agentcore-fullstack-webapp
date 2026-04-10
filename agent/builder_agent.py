@@ -450,8 +450,11 @@ agent = Agent(
 @app.entrypoint
 async def invoke(payload):
     prompt = payload.get("prompt", "Hello")
-    result = agent(prompt)
-    return {"response": str(result.message)}
+    stream = agent.stream_async(prompt)
+    async for event in stream:
+        delta = event.get("event", {}).get("contentBlockDelta", {}).get("delta", {}).get("text")
+        if delta:
+            yield delta
 
 app.run()
 '''

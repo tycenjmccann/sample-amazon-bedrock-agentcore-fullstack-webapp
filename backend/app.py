@@ -295,9 +295,9 @@ async def invoke_agent(agent_runtime_id: str, body: InvokeAgentRequest):
                 yield "data: No response\n\n"
                 return
 
-            # Stream line-by-line for real-time delivery
-            if hasattr(stream, "iter_lines"):
-                for line in stream.iter_lines():
+            # Stream line-by-line using raw urllib3 stream for true real-time delivery
+            if hasattr(stream, "_raw_stream"):
+                for line in stream._raw_stream:
                     text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
                     text = text.strip()
                     if text.startswith("data: "):

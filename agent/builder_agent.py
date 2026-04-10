@@ -50,27 +50,26 @@ def deploy_agent(agent_name: str, agent_code: str, requirements: str = "", descr
         with open(req_file, "w") as f:
             f.write(requirements)
 
-        # Configure
+        # Configure using CLI (this sets up IAM roles, S3 buckets, etc.)
         configure_cmd = [
             "agentcore", "configure",
-            "-e", agent_file,
+            "-e", "strands_agent.py",
             "-n", safe_name,
-            "-rf", req_file,
+            "-rf", "requirements.txt",
             "--disable-memory",
-            "--disable-otel",
             "--region", REGION,
             "--non-interactive",
         ]
-        result = subprocess.run(configure_cmd, capture_output=True, text=True, cwd=tmpdir, timeout=30)
+        result = subprocess.run(configure_cmd, capture_output=True, text=True, cwd=tmpdir, timeout=60)
         if result.returncode != 0:
             return json.dumps({"status": "error", "step": "configure", "error": result.stderr or result.stdout})
 
-        # Deploy
+        # Deploy using CLI (this pre-builds deps with uv, packages everything, uploads to S3, creates runtime)
         deploy_cmd = [
             "agentcore", "deploy",
             "-a", safe_name,
         ]
-        result = subprocess.run(deploy_cmd, capture_output=True, text=True, cwd=tmpdir, timeout=300)
+        result = subprocess.run(deploy_cmd, capture_output=True, text=True, cwd=tmpdir, timeout=600)
         if result.returncode != 0:
             return json.dumps({"status": "error", "step": "deploy", "error": result.stderr or result.stdout})
 

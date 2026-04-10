@@ -439,7 +439,11 @@ def agent_builder_deploy(body: AgentDeployRequest):
             # Ensure the bucket exists
             try:
                 s3_client.head_bucket(Bucket=artifact_bucket)
-            except ClientError:
+            except ClientError as bucket_err:
+                error_code = bucket_err.response.get("Error", {}).get("Code", "")
+                http_status = bucket_err.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+                if http_status != 404 and error_code != "404" and error_code != "NoSuchBucket":
+                    raise
                 create_kwargs = {"Bucket": artifact_bucket}
                 if REGION != "us-east-1":
                     create_kwargs["CreateBucketConfiguration"] = {

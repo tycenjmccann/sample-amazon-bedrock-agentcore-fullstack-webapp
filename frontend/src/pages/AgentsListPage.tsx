@@ -95,6 +95,7 @@ interface ChatMessage {
   type: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isSystem?: boolean; // System-generated messages (deploy status) excluded from Bedrock API calls
 }
 
 interface DeploymentState {
@@ -214,12 +215,15 @@ export default function AgentsListPage() {
     const currentPrompt = prompt;
     setPrompt('');
 
-    // Build the conversation history for the API
+    // Build the conversation history for the API, excluding system-generated messages
+    // (deploy status messages) to maintain alternating user/assistant roles required by Bedrock
     const apiMessages: APIChatMessage[] = [
-      ...messages.map((m) => ({
-        role: (m.type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.content,
-      })),
+      ...messages
+        .filter((m) => !m.isSystem)
+        .map((m) => ({
+          role: (m.type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content,
+        })),
       { role: 'user' as const, content: currentPrompt },
     ];
 
@@ -277,6 +281,7 @@ export default function AgentsListPage() {
           type: 'assistant',
           content: `Deploying **${deployment.agentName}** to AgentCore Runtime...\n\nRuntime ID: \`${result.agentRuntimeId}\`\n\nI'll monitor the deployment status for you.`,
           timestamp: new Date(),
+          isSystem: true,
         },
       ]);
 
@@ -290,6 +295,7 @@ export default function AgentsListPage() {
           type: 'assistant',
           content: `Deployment failed: ${errorMsg}\n\nPlease check your AWS credentials and AgentCore permissions, then try again.`,
           timestamp: new Date(),
+          isSystem: true,
         },
       ]);
     }
@@ -312,6 +318,7 @@ export default function AgentsListPage() {
               type: 'assistant',
               content: `Agent **${status.agentRuntimeName}** is now **READY** and live on AgentCore Runtime!\n\nRuntime ID: \`${agentRuntimeId}\`\n\nYou can now chat with it from the Chat page, or view its details in the Runtime Agents tab.`,
               timestamp: new Date(),
+              isSystem: true,
             },
           ]);
           // Refresh the agents list
@@ -337,6 +344,7 @@ export default function AgentsListPage() {
               content:
                 'Agent deployment **failed**. The runtime entered FAILED status.\n\nPlease check the AgentCore console for details and try again.',
               timestamp: new Date(),
+              isSystem: true,
             },
           ]);
           return;
@@ -356,6 +364,7 @@ export default function AgentsListPage() {
               type: 'assistant',
               content: `Deployment is taking longer than expected (status: ${status.status}). The agent may still be deploying.\n\nCheck the Runtime Agents tab or the AgentCore console for the latest status.`,
               timestamp: new Date(),
+              isSystem: true,
             },
           ]);
         }

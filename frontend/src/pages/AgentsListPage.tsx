@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -16,9 +16,15 @@ import Avatar from '@cloudscape-design/chat-components/avatar';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { listAgents, AgentRuntimeSummary } from '../api/agents';
+import {
+  streamAgentBuilderChat,
+  deployAgent,
+  getDeployStatus,
+  parseDeployableCode,
+  ChatMessage as APIChatMessage,
+} from '../api/agent-builder';
 import '../markdown.css';
 
-// Agent templates inspired by Claude's Quickstart
 interface AgentTemplate {
   id: string;
   name: string;
@@ -89,12 +95,25 @@ interface ChatMessage {
   type: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isSystem?: boolean; // System-generated messages (deploy status) excluded from Bedrock API calls
+}
+
+interface DeploymentState {
+  status: 'idle' | 'ready' | 'deploying' | 'polling' | 'success' | 'error';
+  agentName?: string;
+  description?: string;
+  code?: string;
+  agentRuntimeId?: string;
+  errorMessage?: string;
 }
 
 export default function AgentsListPage() {
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [streamingContent, setStreamingContent] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [deployment, setDeployment] = useState<DeploymentState>({ status: 'idle' });
 
   // Right panel state
   const [activeTabId, setActiveTabId] = useState('templates');
@@ -103,12 +122,13 @@ export default function AgentsListPage() {
   const [agentsError, setAgentsError] = useState('');
   const [filterText, setFilterText] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<AgentRuntimeSummary | null>(null);
+  const [templateContext, setTemplateContext] = useState<string | undefined>(undefined);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, streamingContent]);
 
   // Load agents for the Runtime Agents tab
   useEffect(() => {
@@ -150,10 +170,14 @@ export default function AgentsListPage() {
   const handleTemplateClick = (template: AgentTemplate) => {
     if (template.id === 'blank') {
       setPrompt('Create a new agent with a blank configuration. I want to start from scratch.');
+      setTemplateContext('Blank agent - starting from scratch with no pre-configured tools.');
     } else {
       const toolsList = template.tools ? template.tools.join(', ') : 'standard tools';
       setPrompt(
         `Create a new ${template.name} agent. ${template.description} It should include tools: ${toolsList}.`,
+      );
+      setTemplateContext(
+        `Template: ${template.name}\nDescription: ${template.description}\nTools: ${toolsList}`,
       );
     }
   };
@@ -163,127 +187,195 @@ export default function AgentsListPage() {
     setPrompt(
       `I want to modify agent "${agent.agentRuntimeName}" (ID: ${agent.agentRuntimeId}). It's currently in ${agent.status} status. What changes would you like to make?`,
     );
+    setTemplateContext(undefined);
   };
+
+  const checkForDeployableCode = useCallback((content: string) => {
+    const { agentConfig, code } = parseDeployableCode(content);
+    if (agentConfig && code) {
+      setDeployment({
+        status: 'ready',
+        agentName: agentConfig.agent_name,
+        description: agentConfig.description,
+        code,
+      });
+    }
+  }, []);
 
   const handleSendMessage = async () => {
     if (!prompt.trim()) return;
 
-    const userMessage: ChatMessage = {
-      type: 'user',
-      content: prompt,
-      timestamp: new Date(),
-    };
+    const userMessage: ChatMessage = { type: 'user', content: prompt, timestamp: new Date() };
     setMessages((prev) => [...prev, userMessage]);
     setLoading(true);
+    setChatError('');
+    setStreamingContent('');
+    setDeployment({ status: 'idle' });
+
     const currentPrompt = prompt;
     setPrompt('');
 
-    // Simulate agent configuration assistant response
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Build the conversation history for the API, excluding system-generated messages
+    // (deploy status messages) to maintain alternating user/assistant roles required by Bedrock
+    const apiMessages: APIChatMessage[] = [
+      ...messages
+        .filter((m) => !m.isSystem)
+        .map((m) => ({
+          role: (m.type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content,
+        })),
+      { role: 'user' as const, content: currentPrompt },
+    ];
 
-    let response = '';
+    let fullResponse = '';
 
-    if (currentPrompt.toLowerCase().includes('blank') || currentPrompt.toLowerCase().includes('scratch')) {
-      response = `I'll help you create a new agent from scratch. Here's what we need to configure:
+    await streamAgentBuilderChat(
+      { messages: apiMessages, template_context: templateContext },
+      // onText - called for each streaming chunk
+      (text) => {
+        fullResponse += text;
+        setStreamingContent(fullResponse);
+      },
+      // onDone - called when streaming is complete
+      () => {
+        setMessages((prev) => [
+          ...prev,
+          { type: 'assistant', content: fullResponse, timestamp: new Date() },
+        ]);
+        setStreamingContent('');
+        setLoading(false);
+        // Clear template context after first message exchange
+        setTemplateContext(undefined);
+        // Check if the response contains deployable code
+        checkForDeployableCode(fullResponse);
+      },
+      // onError - called if the stream fails
+      (error) => {
+        setChatError(error);
+        setLoading(false);
+        setStreamingContent('');
+      },
+    );
+  };
 
-**1. Agent Name & Description**
-What should we call this agent and what will it do?
+  const handleDeploy = async () => {
+    if (deployment.status !== 'ready' || !deployment.code || !deployment.agentName) return;
+    setDeployment((prev) => ({ ...prev, status: 'deploying' }));
 
-**2. Foundation Model**
-Which model should power it? Options include:
-- \`us.anthropic.claude-sonnet-4-20250514\` (Claude Sonnet — recommended)
-- \`us.meta.llama3-3-70b-instruct-v1:0\` (Llama 3.3 70B)
-- \`us.amazon.nova-pro-v1:0\` (Amazon Nova Pro)
+    try {
+      const result = await deployAgent({
+        agent_name: deployment.agentName,
+        description: deployment.description || '',
+        agent_code: deployment.code,
+      });
 
-**3. Tools**
-What tools does this agent need? (e.g., web search, database queries, API calls)
+      setDeployment((prev) => ({
+        ...prev,
+        status: 'polling',
+        agentRuntimeId: result.agentRuntimeId,
+      }));
 
-**4. System Prompt**
-What instructions should guide the agent's behavior?
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: 'assistant',
+          content: `Deploying **${deployment.agentName}** to AgentCore Runtime...\n\nRuntime ID: \`${result.agentRuntimeId}\`\n\nI'll monitor the deployment status for you.`,
+          timestamp: new Date(),
+          isSystem: true,
+        },
+      ]);
 
-Let's start with the name and description. What would you like to call your agent?`;
-    } else if (currentPrompt.toLowerCase().includes('modify') || currentPrompt.toLowerCase().includes('changes')) {
-      const agentName = selectedAgent?.agentRuntimeName || 'the selected agent';
-      response = `I can help you modify **${agentName}**. Here are the things we can configure:
-
-| Configuration | Description |
-|---|---|
-| **Model** | Change the foundation model |
-| **Tools** | Add or remove MCP tools |
-| **System Prompt** | Update the agent's instructions |
-| **Memory** | Enable/disable cross-session memory |
-| **Environment Variables** | Set runtime configuration |
-| **Network** | Update network configuration |
-
-What would you like to change?`;
-    } else if (currentPrompt.toLowerCase().includes('trust') || currentPrompt.toLowerCase().includes('safety')) {
-      response = `Great choice! I'll set up a **Trust & Safety Agent** for content moderation. Here's the configuration:
-
-\`\`\`python
-from strands import Agent
-from strands.models import BedrockModel
-
-model = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-20250514",
-    region_name="us-west-2"
-)
-
-agent = Agent(
-    model=model,
-    system_prompt="""You are a trust and safety content 
-    moderation agent...""",
-    tools=[user_lookup, content_flag, 
-           account_suspension, slack_notification, 
-           safety_metrics]
-)
-\`\`\`
-
-**Tools included:**
-- \`user_lookup\` — Look up user profiles and history
-- \`content_flag\` — Flag content for review
-- \`account_suspension\` — Suspend accounts
-- \`slack_notification\` — Send team notifications
-- \`safety_metrics\` — View safety dashboards
-
-Ready to deploy? I can generate the deployment command:
-\`\`\`bash
-agentcore deploy --name trust-safety-agent
-\`\`\`
-
-Would you like to customize any of these settings before deploying?`;
-    } else if (currentPrompt.toLowerCase().includes('support')) {
-      response = `I'll configure a **Support Agent** that handles customer questions. Here's the setup:
-
-\`\`\`python
-agent = Agent(
-    model=BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514"),
-    system_prompt="You are a helpful customer support agent...",
-    tools=[knowledge_search, ticket_create, escalation]
-)
-\`\`\`
-
-**Tools:**
-- \`knowledge_search\` — Search your docs and knowledge base
-- \`ticket_create\` — Create support tickets
-- \`escalation\` — Escalate to human agents
-
-Want to connect it to your knowledge base first, or deploy with defaults?`;
-    } else {
-      response = `I understand you want to work on: "${currentPrompt.slice(0, 100)}"
-
-I can help you with:
-1. **Create a new agent** — Describe what you need and I'll generate the configuration
-2. **Modify an existing agent** — Select one from the "Runtime Agents" tab on the right
-3. **Choose a template** — Browse templates in the "Create New" tab for a quick start
-
-What would you like to do?`;
+      pollDeploymentStatus(result.agentRuntimeId);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Deployment failed';
+      setDeployment((prev) => ({ ...prev, status: 'error', errorMessage: errorMsg }));
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: 'assistant',
+          content: `Deployment failed: ${errorMsg}\n\nPlease check your AWS credentials and AgentCore permissions, then try again.`,
+          timestamp: new Date(),
+          isSystem: true,
+        },
+      ]);
     }
+  };
 
-    setMessages((prev) => [
-      ...prev,
-      { type: 'assistant', content: response, timestamp: new Date() },
-    ]);
-    setLoading(false);
+  const pollDeploymentStatus = async (agentRuntimeId: string) => {
+    const maxAttempts = 30; // Poll for up to 5 minutes (10s intervals)
+    let attempts = 0;
+
+    const poll = async () => {
+      attempts++;
+      try {
+        const status = await getDeployStatus(agentRuntimeId);
+
+        if (status.status === 'READY') {
+          setDeployment((prev) => ({ ...prev, status: 'success' }));
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: 'assistant',
+              content: `Agent **${status.agentRuntimeName}** is now **READY** and live on AgentCore Runtime!\n\nRuntime ID: \`${agentRuntimeId}\`\n\nYou can now chat with it from the Chat page, or view its details in the Runtime Agents tab.`,
+              timestamp: new Date(),
+              isSystem: true,
+            },
+          ]);
+          // Refresh the agents list
+          try {
+            const data = await listAgents();
+            setAgents(data);
+          } catch {
+            // Ignore refresh errors
+          }
+          return;
+        }
+
+        if (status.status === 'FAILED') {
+          setDeployment((prev) => ({
+            ...prev,
+            status: 'error',
+            errorMessage: 'Agent runtime creation failed',
+          }));
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: 'assistant',
+              content:
+                'Agent deployment **failed**. The runtime entered FAILED status.\n\nPlease check the AgentCore console for details and try again.',
+              timestamp: new Date(),
+              isSystem: true,
+            },
+          ]);
+          return;
+        }
+
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 10000); // Poll every 10 seconds
+        } else {
+          setDeployment((prev) => ({
+            ...prev,
+            status: 'error',
+            errorMessage: 'Deployment timed out',
+          }));
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: 'assistant',
+              content: `Deployment is taking longer than expected (status: ${status.status}). The agent may still be deploying.\n\nCheck the Runtime Agents tab or the AgentCore console for the latest status.`,
+              timestamp: new Date(),
+              isSystem: true,
+            },
+          ]);
+        }
+      } catch {
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 10000);
+        }
+      }
+    };
+
+    setTimeout(poll, 10000); // Start polling after 10 seconds
   };
 
   // Template cards grid for the "Create New" tab
@@ -472,7 +564,7 @@ What would you like to do?`;
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        description="Create new agents or modify existing ones through conversation"
+        description="Create new agents or modify existing ones through conversation with a Bedrock-powered assistant"
       >
         Agent Builder
       </Header>
@@ -484,11 +576,11 @@ What would you like to do?`;
           header={
             <Header
               variant="h3"
-              description="Describe your agent or ask to modify an existing one"
+              description="Powered by Amazon Bedrock &mdash; describe your agent and deploy it live"
             >
               <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                 <span>Agent Configuration Assistant</span>
-                {loading && <Badge color="blue">Thinking</Badge>}
+                {loading && <Badge color="blue">Streaming</Badge>}
               </SpaceBetween>
             </Header>
           }
@@ -498,14 +590,100 @@ What would you like to do?`;
             aria-label="Agent Builder Chat"
             style={{ display: 'flex', flexDirection: 'column', minHeight: '500px' }}
           >
+            {chatError && (
+              <Alert type="error" dismissible onDismiss={() => setChatError('')}>
+                {chatError}
+              </Alert>
+            )}
+
+            {/* Deploy banner */}
+            {deployment.status !== 'idle' && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '8px',
+                  border:
+                    deployment.status === 'success'
+                      ? '2px solid #037f0c'
+                      : deployment.status === 'error'
+                        ? '2px solid #d91515'
+                        : '2px solid #0972d3',
+                  backgroundColor:
+                    deployment.status === 'success'
+                      ? '#f2fcf3'
+                      : deployment.status === 'error'
+                        ? '#fdf3f3'
+                        : '#f2f8fd',
+                  marginBottom: '8px',
+                }}
+              >
+                <SpaceBetween size="xs">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                      {deployment.status === 'ready' && (
+                        <>
+                          <StatusIndicator type="info">Ready to deploy</StatusIndicator>
+                          <Box variant="span" fontWeight="bold">{deployment.agentName}</Box>
+                        </>
+                      )}
+                      {deployment.status === 'deploying' && (
+                        <StatusIndicator type="in-progress">
+                          Deploying {deployment.agentName}...
+                        </StatusIndicator>
+                      )}
+                      {deployment.status === 'polling' && (
+                        <StatusIndicator type="in-progress">
+                          Waiting for {deployment.agentName} to become ready...
+                        </StatusIndicator>
+                      )}
+                      {deployment.status === 'success' && (
+                        <StatusIndicator type="success">
+                          {deployment.agentName} deployed successfully!
+                        </StatusIndicator>
+                      )}
+                      {deployment.status === 'error' && (
+                        <StatusIndicator type="error">
+                          Deployment failed: {deployment.errorMessage}
+                        </StatusIndicator>
+                      )}
+                    </SpaceBetween>
+                    {deployment.status === 'ready' && (
+                      <Button variant="primary" onClick={handleDeploy}>
+                        Deploy to AgentCore
+                      </Button>
+                    )}
+                    {deployment.status === 'error' && deployment.code && (
+                      <Button
+                        variant="normal"
+                        onClick={() =>
+                          setDeployment((prev) => ({ ...prev, status: 'ready', errorMessage: undefined }))
+                        }
+                      >
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                  {deployment.description && deployment.status === 'ready' && (
+                    <Box variant="span" fontSize="body-s" color="text-body-secondary">
+                      {deployment.description}
+                    </Box>
+                  )}
+                </SpaceBetween>
+              </div>
+            )}
+
             <div style={{ flex: 1, overflowY: 'auto', maxHeight: '500px', paddingBottom: '16px' }}>
               <SpaceBetween size="m">
-                {messages.length === 0 ? (
+                {messages.length === 0 && !streamingContent ? (
                   <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
                     <SpaceBetween size="s">
                       <Box fontSize="heading-l">What do you want to build?</Box>
                       <Box>
                         Describe your agent or start with a template from the right panel.
+                      </Box>
+                      <Box fontSize="body-s">
+                        Powered by Amazon Bedrock &mdash; your responses come from a real LLM, not
+                        canned text.
                       </Box>
                     </SpaceBetween>
                   </Box>
@@ -535,6 +713,44 @@ What would you like to do?`;
                               components={{
                                 code: ({ className, children }: any) => {
                                   const inline = !className;
+                                  const lang = className?.replace('language-', '') || '';
+                                  if (lang === 'agent-config') {
+                                    return null;
+                                  }
+                                  if (lang === 'python-deploy') {
+                                    return (
+                                      <div style={{ position: 'relative' }}>
+                                        <div
+                                          style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            backgroundColor: '#232f3e',
+                                            color: '#ff9900',
+                                            padding: '6px 12px',
+                                            borderRadius: '6px 6px 0 0',
+                                            fontFamily: 'monospace',
+                                            fontSize: '0.8em',
+                                          }}
+                                        >
+                                          <span>strands_agent.py (ready to deploy)</span>
+                                        </div>
+                                        <pre
+                                          style={{
+                                            backgroundColor: '#f4f4f4',
+                                            padding: '12px',
+                                            borderRadius: '0 0 6px 6px',
+                                            overflow: 'auto',
+                                            fontFamily: 'monospace',
+                                            fontSize: '0.9em',
+                                            marginTop: 0,
+                                          }}
+                                        >
+                                          <code>{children}</code>
+                                        </pre>
+                                      </div>
+                                    );
+                                  }
                                   return inline ? (
                                     <code
                                       style={{
@@ -594,7 +810,28 @@ What would you like to do?`;
                       </div>
                     ))}
 
-                    {loading && (
+                    {/* Streaming content - shown while the assistant is generating */}
+                    {streamingContent && (
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                        <Avatar
+                          ariaLabel="Agent Configuration Assistant"
+                          tooltipText="Agent Configuration Assistant"
+                          iconName="gen-ai"
+                          color="gen-ai"
+                          loading={true}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <ChatBubble type="incoming" ariaLabel="Assistant streaming response" avatar={<div />}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {streamingContent}
+                            </ReactMarkdown>
+                          </ChatBubble>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Loading indicator before streaming starts */}
+                    {loading && !streamingContent && (
                       <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                         <Avatar
                           ariaLabel="Agent Configuration Assistant"

@@ -18,6 +18,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/management/, ''),
       },
+      // Proxy builder agent requests to the builder agent on port 8082
+      '/builder': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/builder/, ''),
+      },
     },
   },
   define: {

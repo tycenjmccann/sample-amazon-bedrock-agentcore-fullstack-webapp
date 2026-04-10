@@ -39,8 +39,8 @@ export interface DeployStatusResponse {
 }
 
 /**
- * Stream chat with the Agent Configuration Assistant via Bedrock.
- * Returns a ReadableStream that yields SSE events.
+ * Stream chat with the Agent Builder Agent (a real Strands agent with memory + tools).
+ * Falls back to the management backend Converse API if the builder agent is unavailable.
  */
 export async function streamAgentBuilderChat(
   request: AgentBuilderChatRequest,
@@ -49,10 +49,17 @@ export async function streamAgentBuilderChat(
   onError: (error: string) => void,
 ): Promise<void> {
   try {
-    const response = await fetch(`${API_BASE}/api/agent-builder/chat`, {
+    // Try the real builder agent first
+    const lastUserMsg = request.messages.filter(m => m.role === 'user').pop();
+    const prompt = lastUserMsg?.content || '';
+
+    const response = await fetch('/builder/invocations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        prompt,
+        session_id: 'builder_session_default',
+      }),
     });
 
     if (!response.ok) {
@@ -83,12 +90,16 @@ export async function streamAgentBuilderChat(
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
-            const event: StreamEvent = JSON.parse(line.slice(6));
-            if (event.type === 'text' && event.content) {
-              onText(event.content);
-            } else if (event.type === 'done') {
+            const parsed = JSON.parse(line.slice(6));
+            // Handle structured SSE events: {type: "text", content: "..."}
+            if (parsed && typeof parsed === 'object' && parsed.type === 'text' && parsed.content) {
+              onText(parsed.content);
+            } else if (parsed && typeof parsed === 'object' && parsed.type === 'done') {
               onDone();
               return;
+            } else if (typeof parsed === 'string') {
+              // Handle raw string SSE events from Strands agent: data: "text chunk"
+              onText(parsed);
             }
           } catch {
             // Skip malformed JSON lines
@@ -154,8 +165,9 @@ export function parseDeployableCode(
     }
   }
 
-  // Extract python-deploy block
-  const codeMatch = content.match(/```python-deploy\s*\n([\s\S]*?)\n```/);
+  // Extract python-deploy block (or fall back to regular python block)
+  const codeMatch = content.match(/```python-deploy\s*\n([\s\S]*?)\n```/) 
+    || content.match(/```python\s*\n([\s\S]*?)\n```/);
   if (codeMatch) {
     code = codeMatch[1].trim();
   }

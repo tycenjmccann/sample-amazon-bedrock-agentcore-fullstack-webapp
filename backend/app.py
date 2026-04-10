@@ -485,9 +485,17 @@ def agent_builder_deploy(body: AgentDeployRequest):
                 "strands-agents\n"
                 "strands-agents-tools\n"
                 "bedrock-agentcore\n"
+                "bedrock-agentcore-starter-toolkit\n"
                 "boto3\n"
             )
             zf.writestr("requirements.txt", requirements)
+
+            # Add a setup script to pre-install deps before the runtime starts
+            setup_script = (
+                "#!/bin/bash\n"
+                "pip install -q -r requirements.txt\n"
+            )
+            zf.writestr("setup.sh", setup_script)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.read()

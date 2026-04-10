@@ -214,24 +214,44 @@ export default function AgentsListPage() {
   };
 
   const checkForDeployableCode = useCallback((content: string) => {
+    console.log('[Builder] Checking for deployable code, content length:', content.length);
     const { agentConfig, code } = parseDeployableCode(content);
-    if (agentConfig && code) {
+    console.log('[Builder] Parse result:', { agentConfig, codeLength: code?.length });
+    if (code) {
+      const name = agentConfig?.agent_name || 'custom_agent';
+      const desc = agentConfig?.description || 'Agent created via Agent Builder';
       setDeployment({
         status: 'ready',
-        agentName: agentConfig.agent_name,
-        description: agentConfig.description,
+        agentName: name,
+        description: desc,
         code,
       });
-      // Auto-populate the canvas with the generated code
       setCanvas({
         code,
         fileName: 'strands_agent.py',
-        agentName: agentConfig.agent_name,
-        description: agentConfig.description,
+        agentName: name,
+        description: desc,
         isFromRuntime: false,
       });
-      // Auto-switch to the Code tab
       setActiveTabId('code');
+
+      // Remove code blocks from the chat message, keep just the explanation text
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last && last.type === 'assistant') {
+          let cleaned = last.content;
+          cleaned = cleaned.replace(/```agent-config\s*\n[\s\S]*?\n```/g, '');
+          cleaned = cleaned.replace(/```python-deploy\s*\n[\s\S]*?\n```/g, '');
+          cleaned = cleaned.replace(/```python\s*\n[\s\S]*?\n```/g, '');
+          cleaned = cleaned.trim();
+          if (cleaned) {
+            cleaned += '\n\n*Code is now in the editor →*';
+          }
+          updated[updated.length - 1] = { ...last, content: cleaned };
+        }
+        return updated;
+      });
     }
   }, []);
 
@@ -608,7 +628,7 @@ export default function AgentsListPage() {
 
   // Code canvas content for the "Code" tab
   const codeCanvasContent = canvas ? (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 320px)' }}>
       {/* Canvas header with agent info and deploy button */}
       <div
         style={{
@@ -713,7 +733,7 @@ export default function AgentsListPage() {
         <span>{canvas.fileName}</span>
       </div>
 
-      {/* Code content */}
+      {/* Code content - editable */}
       <div
         style={{
           flex: 1,
@@ -723,20 +743,33 @@ export default function AgentsListPage() {
           position: 'relative',
         }}
       >
-        <pre
+        <textarea
+          value={canvas.code}
+          onChange={(e) => {
+            const newCode = e.target.value;
+            setCanvas((prev) => prev ? { ...prev, code: newCode } : prev);
+            setDeployment((prev) => prev.code ? { ...prev, code: newCode } : prev);
+          }}
+          spellCheck={false}
           style={{
+            width: '100%',
+            height: '100%',
+            minHeight: 0,
             margin: 0,
             padding: '16px',
             fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace",
             fontSize: '0.85em',
             lineHeight: '1.6',
             color: '#d4d4d4',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
+            backgroundColor: '#1e1e1e',
+            border: 'none',
+            outline: 'none',
+            resize: 'none',
+            whiteSpace: 'pre',
+            overflowWrap: 'normal',
+            overflowX: 'auto',
           }}
-        >
-          <code>{canvas.code}</code>
-        </pre>
+        />
       </div>
     </div>
   ) : (
@@ -759,28 +792,23 @@ export default function AgentsListPage() {
       if (lang === 'agent-config') {
         return null;
       }
-      if (lang === 'python-deploy') {
-        // In the chat, show a compact reference that points to the canvas
+      if (lang === 'python-deploy' || lang === 'python') {
+        // Show code inline in chat (visible while streaming), canvas gets populated on completion
         return (
-          <div
+          <pre
             style={{
-              padding: '8px 12px',
+              backgroundColor: '#1e1e1e',
+              padding: '12px',
               borderRadius: '6px',
-              backgroundColor: '#232f3e',
-              color: '#ff9900',
-              fontFamily: 'monospace',
+              overflow: 'auto',
+              maxWidth: '100%',
+              fontFamily: "'Fira Code', 'Consolas', monospace",
               fontSize: '0.85em',
-              cursor: 'pointer',
-            }}
-            onClick={() => setActiveTabId('code')}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') setActiveTabId('code');
+              color: '#d4d4d4',
             }}
           >
-            View generated code in canvas &rarr;
-          </div>
+            <code>{children}</code>
+          </pre>
         );
       }
       return inline ? (
@@ -874,7 +902,7 @@ export default function AgentsListPage() {
                 </Alert>
               )}
 
-              <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '16px' }}>
+              <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '16px' }}>
                 <SpaceBetween size="m">
                   {messages.length === 0 && !streamingContent ? (
                     <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">

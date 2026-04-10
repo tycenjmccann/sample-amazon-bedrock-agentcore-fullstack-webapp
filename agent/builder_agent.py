@@ -592,6 +592,7 @@ CODE GENERATION RULES:
 - Do NOT over-engineer tools with complex analysis logic — keep them as thin wrappers around DynamoDB queries
 - The LLM reasoning handles the analysis, tools just fetch and return data
 - Total agent code should be under 200 lines
+- CRITICAL: Do NOT initialize boto3 clients or DynamoDB resources at module level. Always create them INSIDE tool functions to avoid slow cold starts. Example: `ddb = boto3.resource('dynamodb')` goes inside the tool, not at the top of the file.
 
 AGENT NAMING RULES:
 - Must match: [a-zA-Z][a-zA-Z0-9_]{0,47}

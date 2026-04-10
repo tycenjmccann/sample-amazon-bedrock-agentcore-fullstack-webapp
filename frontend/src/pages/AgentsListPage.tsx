@@ -282,12 +282,19 @@ export default function AgentsListPage() {
 
     let fullResponse = '';
 
+    let codeDetected = false;
+
     await streamAgentBuilderChat(
       { messages: apiMessages, template_context: templateContext },
       // onText - called for each streaming chunk
       (text) => {
         fullResponse += text;
         setStreamingContent(fullResponse);
+        // Check for code as it streams — detect when a python block closes
+        if (!codeDetected && fullResponse.includes('```python') && fullResponse.match(/```python[\s\S]+?```/)) {
+          codeDetected = true;
+          checkForDeployableCode(fullResponse);
+        }
       },
       // onDone - called when streaming is complete
       () => {

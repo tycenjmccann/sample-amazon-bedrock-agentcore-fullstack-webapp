@@ -444,14 +444,12 @@ def run_evaluation_endpoint(body: RunEvalRequest):
         # Get agent ARN
         agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
         arn = agent["agentRuntimeArn"]
-        session_id = f"eval_{uuid.uuid4().hex[:12]}"
+        session_id = f"eval_{uuid.uuid4().hex}{uuid.uuid4().hex[:8]}"
 
-        # Invoke the agent (this generates real OTEL traces if agent has strands-agents[otel])
+        # Invoke the agent (generates real OTEL traces)
         response = runtime.invoke_agent_runtime(
-            agentRuntimeArn=arn,
-            qualifier="DEFAULT",
-            contentType="application/json",
-            accept="application/json",
+            agentRuntimeArn=arn, qualifier="DEFAULT",
+            contentType="application/json", accept="application/json",
             runtimeSessionId=session_id,
             payload=json.dumps({"prompt": body.test_prompt}).encode("utf-8"),
         )
@@ -461,76 +459,41 @@ def run_evaluation_endpoint(body: RunEvalRequest):
             data = resp_body.read()
             agent_response = data.decode("utf-8") if isinstance(data, bytes) else str(data)
 
-        # Wait for OTEL spans to propagate to CloudWatch
-        time.sleep(15)
+        # Wait for OTEL spans to propagate
+        time.sleep(20)
 
-        # Use the ObservabilityClient to fetch real spans
-        from bedrock_agentcore_starter_toolkit.operations.observability.client import ObservabilityClient
-        obs_client = ObservabilityClient(region_name=REGION)
+        # Use the starter toolkit's EvaluationProcessor (same as CLI)
+        from bedrock_agentcore_starter_toolkit.operations.evaluation.data_plane_client import EvaluationDataPlaneClient
+        from bedrock_agentcore_starter_toolkit.operations.evaluation.on_demand_processor import EvaluationProcessor
 
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - (7 * 86400 * 1000)  # 7 days back
+        eval_dp = EvaluationDataPlaneClient(region_name=REGION)
+        processor = EvaluationProcessor(data_plane_client=eval_dp)
 
-        spans = obs_client.query_spans_by_session(
+        eval_results = processor.evaluate_session(
             session_id=session_id,
-            start_time_ms=start_ms,
-            end_time_ms=end_ms,
+            evaluators=body.evaluator_ids[:5],
             agent_id=body.agent_runtime_id,
+            region=REGION,
         )
 
-        if not spans:
-            # Retry after more wait
-            time.sleep(15)
-            spans = obs_client.query_spans_by_session(
-                session_id=session_id,
-                start_time_ms=start_ms,
-                end_time_ms=end_ms,
-                agent_id=body.agent_runtime_id,
-            )
-
-        # Run evaluations using real trace IDs
         results = []
-        trace_ids = list(set(s.trace_id for s in spans if s.trace_id))
-
-        for eval_id in body.evaluator_ids[:5]:
-            try:
-                if trace_ids:
-                    eval_response = runtime.evaluate(
-                        evaluatorId=eval_id,
-                        evaluationTarget={"traceIds": trace_ids[:10]},
-                    )
-                else:
-                    # Fallback: no spans found, report the issue
-                    results.append({
-                        "evaluator": eval_id,
-                        "score": None,
-                        "error": "No OTEL spans found. Agent may need strands-agents[otel] and aws-opentelemetry-distro in requirements.",
-                    })
-                    continue
-
-                eval_response.pop("ResponseMetadata", None)
-                results.append({
-                    "evaluator": eval_id,
-                    "score": eval_response.get("score"),
-                    "reason": eval_response.get("reason", ""),
-                })
-            except Exception as eval_err:
-                results.append({
-                    "evaluator": eval_id,
-                    "score": None,
-                    "error": str(eval_err),
-                })
+        for r in eval_results.results:
+            results.append({
+                "evaluator": r.evaluator_id,
+                "score": r.value,
+                "label": r.label,
+                "reason": r.explanation,
+                "error": r.error,
+            })
 
         return {
             "status": "complete",
             "agent": body.agent_runtime_id,
             "prompt": body.test_prompt,
             "response_preview": agent_response[:500],
-            "spans_found": len(spans),
-            "trace_ids": trace_ids,
             "results": results,
         }
-    except ClientError as e:
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

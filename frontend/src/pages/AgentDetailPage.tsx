@@ -88,13 +88,22 @@ export default function AgentDetailPage() {
     setGatewaysLoading(true);
     try {
       const gws = await listGateways();
-      setGateways(gws);
-      if (gws.length > 0) {
-        const targets = await listGatewayTargets(gws[0].gatewayId);
+      const ev = agent?.environmentVariables || {};
+      const gwUrl = ev.GATEWAY_URL || ev.gateway_url || '';
+      const gwId = ev.GATEWAY_ID || ev.gateway_id || ev.MCP_GATEWAY_ID || '';
+      let filtered = gws;
+      if (gwId) {
+        filtered = gws.filter((g) => g.gatewayId === gwId);
+      } else if (gwUrl) {
+        filtered = gws.filter((g) => gwUrl.includes(g.gatewayId));
+      }
+      setGateways(filtered.length > 0 ? filtered : gws);
+      const targetGw = filtered.length > 0 ? filtered[0] : gws[0];
+      if (targetGw) {
+        const targets = await listGatewayTargets(targetGw.gatewayId);
         setGatewayTargets(targets);
       }
     } catch {
-      // Gateways may not be configured
     } finally {
       setGatewaysLoading(false);
     }
@@ -104,9 +113,14 @@ export default function AgentDetailPage() {
     setMemoriesLoading(true);
     try {
       const mems = await listMemories();
-      setMemories(mems);
+      const ev = agent?.environmentVariables || {};
+      const memId = ev.BEDROCK_AGENTCORE_MEMORY_ID || ev.MEMORY_ID || ev.memory_id || '';
+      if (memId) {
+        setMemories(mems.filter((m) => (m as any).id === memId || m.memoryId === memId || m.arn?.includes(memId)));
+      } else {
+        setMemories([]);
+      }
     } catch {
-      // Memory may not be configured
     } finally {
       setMemoriesLoading(false);
     }

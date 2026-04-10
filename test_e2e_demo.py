@@ -201,11 +201,17 @@ def run():
     print("ACT 4: EVALUATIONS")
     print("=" * 70)
     
-    # Use the otel_real_agent which we know has OTEL working
+    # Use the otel_real_agent which we know has OTEL working and existing spans
     eval_agent_id = "otel_real_agent-r2rkQ08hZG"
     
     print("\n[4.1] Running on-demand evaluation...")
     try:
+        # First invoke to ensure fresh spans exist, then wait
+        requests.post(f"{BACKEND_URL}/api/agents/{eval_agent_id}/invoke",
+            json={"prompt": "Say hello to TestUser"}, timeout=60)
+        print("    Invoked agent, waiting 30s for OTEL propagation...")
+        time.sleep(30)
+        
         resp = requests.post(f"{BACKEND_URL}/api/evaluate", json={
             "agent_runtime_id": eval_agent_id,
             "test_prompt": "Say hello to Alice and tell me about the weather",

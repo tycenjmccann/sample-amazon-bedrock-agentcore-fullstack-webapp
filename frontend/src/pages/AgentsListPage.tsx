@@ -198,6 +198,8 @@ export default function AgentsListPage() {
       `I want to modify agent "${agent.agentRuntimeName}" (ID: ${agent.agentRuntimeId}). It's currently in ${agent.status} status. What changes would you like to make?`,
     );
     setTemplateContext(undefined);
+    // Reset deployment state so stale deploy actions don't appear on the canvas
+    setDeployment({ status: 'idle' });
     // Load agent info into the canvas
     setCanvas({
       code: `# Agent: ${agent.agentRuntimeName}\n# Runtime ID: ${agent.agentRuntimeId}\n# Status: ${agent.status}\n${agent.description ? `# Description: ${agent.description}\n` : ''}\n# Use the chat to request modifications to this agent.\n# The assistant will generate updated code here.`,

@@ -385,7 +385,7 @@ class GenerateTestRequest(BaseModel):
 
 @app.post("/api/evaluate/generate-test")
 def generate_test_prompt(body: GenerateTestRequest):
-    """Use an LLM to generate a good test prompt based on the agent's configuration."""
+    """Generate targeted test prompts based on the agent's actual tools and configuration."""
     try:
         control = get_control_client()
         agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
@@ -394,12 +394,30 @@ def generate_test_prompt(body: GenerateTestRequest):
             if k in agent and hasattr(agent[k], "isoformat"):
                 agent[k] = agent[k].isoformat()
 
-        # Build context about the agent
+        # Try to get the agent's code to extract tools and system prompt
+        agent_code_info = ""
+        artifact = agent.get("agentRuntimeArtifact", {})
+        code_config = artifact.get("codeConfiguration", {})
+        s3_info = code_config.get("code", {}).get("s3", {})
+        if s3_info.get("bucket") and s3_info.get("prefix"):
+            try:
+                s3 = boto3.client("s3", region_name=REGION)
+                import zipfile, io
+                obj = s3.get_object(Bucket=s3_info["bucket"], Key=s3_info["prefix"])
+                zip_bytes = obj["Body"].read()
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                    for name in zf.namelist():
+                        if name.endswith(".py") and "agent" in name.lower() or name == "strands_agent.py":
+                            code = zf.read(name).decode("utf-8")
+                            agent_code_info = code[:3000]  # First 3000 chars
+                            break
+            except Exception:
+                pass
+
         agent_context = json.dumps({
             "name": agent.get("agentRuntimeName"),
             "description": agent.get("description", ""),
             "environmentVariables": agent.get("environmentVariables", {}),
-            "protocol": agent.get("protocolConfiguration", {}),
         }, indent=2)
 
         bedrock = boto3.client("bedrock-runtime", region_name=REGION)
@@ -407,21 +425,37 @@ def generate_test_prompt(body: GenerateTestRequest):
             modelId=AGENT_BUILDER_MODEL_ID,
             messages=[{
                 "role": "user",
-                "content": [{"text": f"""Given this AgentCore agent configuration:
+                "content": [{"text": f"""You are creating evaluation test prompts for an AI agent. Here is the agent's configuration and source code:
 
+AGENT CONFIG:
 {agent_context}
 
-Available evaluators: Builtin.Helpfulness, Builtin.Correctness, Builtin.Coherence, Builtin.Conciseness, Builtin.ResponseRelevance, Builtin.InstructionFollowing, Builtin.ToolSelectionAccuracy, Builtin.ToolParameterAccuracy, Builtin.Harmfulness, Builtin.Faithfulness
+AGENT SOURCE CODE (tools, system prompt, etc.):
+{agent_code_info if agent_code_info else "Not available - generate tests based on the agent name and description."}
 
-Generate 3 diverse test prompts that would thoroughly test this agent's capabilities. For each test, select the most relevant evaluators (2-4 per test) and explain your reasoning.
+EVALUATOR LEVELS:
+- TRACE level: Helpfulness, Correctness, Coherence, Conciseness, ResponseRelevance, InstructionFollowing, Harmfulness, Faithfulness — judge reads one request→response
+- TOOL_CALL level: ToolSelectionAccuracy, ToolParameterAccuracy — judge checks if the right tool was called with correct parameters
+- SESSION level: GoalSuccessRate — judge reads entire conversation to see if the user's goal was met
 
-Return ONLY a JSON array. No other text. Format:
-[{{"prompt": "...", "description": "What this tests", "evaluators": ["Builtin.X", "Builtin.Y"], "reasoning": "Why these evaluators: ..."}}]"""}],
+INSTRUCTIONS:
+Generate exactly 3 test prompts. Each test should focus on a DIFFERENT aspect:
+
+Test 1: TOOL USAGE — A prompt that requires the agent to select and use the correct tool(s) with proper parameters. Use real table names, field names, and sample IDs from the code.
+Test 2: REASONING & ACCURACY — A prompt that requires the agent to retrieve data AND reason about it (assess risk, make a recommendation, identify patterns).
+Test 3: MULTI-STEP WORKFLOW — A prompt that requires multiple tool calls in sequence to complete a complex task end-to-end.
+
+For each test, write the "reasoning" as an OUTCOME-FOCUSED explanation:
+- What capability this test measures in plain language
+- How each selected evaluator contributes to measuring that capability
+- Example: "Measures how well the agent can investigate a reported user by retrieving their profile and reports, then synthesizing findings into an actionable recommendation. ToolSelectionAccuracy checks it picks the right lookup tools, Correctness validates the data in its response matches what the tools returned, InstructionFollowing verifies it follows the progressive enforcement policy."
+
+Return ONLY a JSON array:
+[{{"prompt": "...", "description": "Brief title", "evaluators": ["Builtin.X", "Builtin.Y"], "reasoning": "Outcome-focused explanation..."}}]"""}],
             }],
-            inferenceConfig={"maxTokens": 800},
+            inferenceConfig={"maxTokens": 1200},
         )
         text = response["output"]["message"]["content"][0]["text"]
-        # Extract JSON from response
         import re
         match = re.search(r'\[[\s\S]*\]', text)
         if match:

@@ -176,17 +176,18 @@ def create_gateway(name: str, description: str = ""):
 
 
 @tool
-def create_gateway_target(gateway_id: str, name: str, description: str, target_type: str = "lambda", lambda_arn: str = "", openapi_spec_uri: str = "", api_key: str = ""):
+def create_gateway_target(gateway_id: str, name: str, description: str, target_type: str = "lambda", lambda_arn: str = "", openapi_spec_uri: str = "", api_key: str = "", aws_service: str = ""):
     """Add a tool target to an existing MCP Gateway. Each target becomes a tool the agent can call.
     
     Args:
         gateway_id: The gateway ID to add the target to
         name: Name for this tool target (e.g. 'SlackIntegration', 'InternalAPI')
         description: What this tool target provides
-        target_type: Type of target - 'lambda' for Lambda functions, 'openapi' for OpenAPI spec
+        target_type: Type of target - 'lambda' for Lambda functions, 'openapi' for OpenAPI spec, 'smithy' for AWS service (DynamoDB, S3, etc.)
         lambda_arn: ARN of the Lambda function (required for lambda targets)
-        openapi_spec_uri: URL to OpenAPI spec JSON/YAML (required for openapi targets, e.g. https://api.example.com/openapi.json)
+        openapi_spec_uri: URL to OpenAPI spec JSON/YAML (required for openapi targets)
         api_key: Optional API key for authenticating with the OpenAPI target
+        aws_service: AWS service name for smithy targets - 'dynamodb', 's3', etc. (required for smithy targets)
     """
     import boto3
     client = boto3.client("bedrock-agentcore-control", region_name=REGION)
@@ -234,17 +235,19 @@ def create_gateway_target(gateway_id: str, name: str, description: str, target_t
 
             params["targetConfiguration"] = {"mcp": {"openApiSchema": {"s3": {"uri": f"s3://{bucket}/{s3_key}"}}}}
             params["credentialProviderConfigurations"] = cred_config
-            if api_key:
-                params["credentialProviderConfigurations"] = [{
-                    "credentialProviderType": "CUSTOM",
-                    "apiKeyCredentialProvider": {
-                        "apiKey": api_key,
-                        "credentialLocation": "header",
-                        "credentialParameterName": "X-API-Key",
-                    }
-                }]
+        elif target_type == "smithy" and aws_service:
+            # Smithy model targets use pre-built AWS service schemas
+            # The CLI uses a known S3 bucket with pre-built schemas
+            smithy_map = {
+                "dynamodb": "s3://amazonbedrockagentcore-built-sampleschemas455e0815-oj7jujcd8xiu/dynamodb-smithy.json",
+                "s3": "s3://amazonbedrockagentcore-built-sampleschemas455e0815-oj7jujcd8xiu/s3-smithy.json",
+            }
+            schema_uri = smithy_map.get(aws_service.lower())
+            if not schema_uri:
+                return json.dumps({"status": "error", "error": f"Unknown AWS service '{aws_service}'. Supported: {list(smithy_map.keys())}"})
+            params["targetConfiguration"] = {"mcp": {"smithyModel": {"s3": {"uri": schema_uri}}}}
         else:
-            return json.dumps({"status": "error", "error": f"For target_type='{target_type}', provide lambda_arn or openapi_spec_uri"})
+            return json.dumps({"status": "error", "error": f"For target_type='{target_type}', provide lambda_arn, openapi_spec_uri, or aws_service"})
 
         response = client.create_gateway_target(**params)
         response.pop("ResponseMetadata", None)

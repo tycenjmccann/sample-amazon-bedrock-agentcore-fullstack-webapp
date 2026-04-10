@@ -366,6 +366,87 @@ def attach_memory_to_agent(memory_id: str, agent_runtime_id: str):
 
 model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
 
+# ---------------------------------------------------------------------------
+# AWS Infrastructure Discovery Tools
+# ---------------------------------------------------------------------------
+
+@tool
+def list_dynamodb_tables():
+    """List all DynamoDB tables in the account. Use this to discover what data sources are available for agents."""
+    import boto3
+    client = boto3.client("dynamodb", region_name=REGION)
+    try:
+        tables = client.list_tables().get("TableNames", [])
+        result = []
+        for t in tables:
+            desc = client.describe_table(TableName=t)["Table"]
+            keys = [{"name": k["AttributeName"], "type": k["KeyType"]} for k in desc.get("KeySchema", [])]
+            result.append({"name": t, "keys": keys, "itemCount": desc.get("ItemCount", 0)})
+        return json.dumps({"tables": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def describe_dynamodb_table(table_name: str):
+    """Get detailed info about a DynamoDB table including its schema, item count, and sample data.
+    
+    Args:
+        table_name: Name of the DynamoDB table to describe
+    """
+    import boto3
+    client = boto3.client("dynamodb", region_name=REGION)
+    try:
+        desc = client.describe_table(TableName=table_name)["Table"]
+        keys = [{"name": k["AttributeName"], "type": k["KeyType"]} for k in desc.get("KeySchema", [])]
+        attrs = [{"name": a["AttributeName"], "type": a["AttributeType"]} for a in desc.get("AttributeDefinitions", [])]
+        # Get a sample item
+        scan = client.scan(TableName=table_name, Limit=2)
+        sample = scan.get("Items", [])
+        # Simplify DynamoDB format for readability
+        def simplify(item):
+            out = {}
+            for k, v in item.items():
+                for typ, val in v.items():
+                    out[k] = val
+            return out
+        sample_simplified = [simplify(i) for i in sample]
+        return json.dumps({
+            "name": table_name,
+            "keys": keys,
+            "attributes": attrs,
+            "itemCount": desc.get("ItemCount", 0),
+            "sampleItems": sample_simplified,
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def list_lambda_functions():
+    """List all Lambda functions in the account. Useful for finding existing functions to connect as MCP gateway targets."""
+    import boto3
+    client = boto3.client("lambda", region_name=REGION)
+    try:
+        funcs = client.list_functions(MaxItems=50).get("Functions", [])
+        result = [{"name": f["FunctionName"], "runtime": f.get("Runtime", ""), "description": f.get("Description", "")} for f in funcs]
+        return json.dumps({"functions": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def list_s3_buckets():
+    """List S3 buckets in the account. Useful for finding data sources for agents."""
+    import boto3
+    client = boto3.client("s3", region_name=REGION)
+    try:
+        buckets = client.list_buckets().get("Buckets", [])
+        result = [{"name": b["Name"]} for b in buckets[:20]]
+        return json.dumps({"buckets": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 SYSTEM_PROMPT = """You are the AgentCore Builder — an AI assistant that helps users create, configure, and deploy AI agents, MCP gateways, and memory stores on Amazon Bedrock AgentCore.
 
 You have MEMORY of past conversations. If a user references a previous agent, gateway, or memory store, use your memory to recall the details.
@@ -375,6 +456,7 @@ You can:
 - Set up MCP gateways to connect agents to external APIs and services
 - Configure memory stores so agents remember context across sessions
 - Wire everything together: attach gateways and memory to agents
+- Discover AWS infrastructure (DynamoDB tables, Lambda functions, S3 buckets) to connect agents to real data
 
 When helping users:
 1. Ask clarifying questions to understand their use case
@@ -424,9 +506,14 @@ async def agent_invocation(payload):
     agent = Agent(
         model=model,
         tools=[
+            # Agent tools
             deploy_agent, list_deployed_agents, check_agent_status,
+            # Gateway tools
             create_gateway, create_gateway_target, list_gateways, list_gateway_targets,
+            # Memory tools
             create_memory_store, list_memory_stores, check_memory_status, attach_memory_to_agent,
+            # AWS infra discovery
+            list_dynamodb_tables, describe_dynamodb_table, list_lambda_functions, list_s3_buckets,
         ],
         system_prompt=SYSTEM_PROMPT,
         session_manager=session_manager,

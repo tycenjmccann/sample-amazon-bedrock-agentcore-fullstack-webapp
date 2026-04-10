@@ -56,6 +56,8 @@ export default function EvaluationsPage() {
   ]);
   const [testPrompt, setTestPrompt] = useState('Hello! What can you help me with?');
   const [running, setRunning] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<{prompt: string; description: string}[]>([]);
   const [error, setError] = useState('');
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
 
@@ -67,6 +69,29 @@ export default function EvaluationsPage() {
       }
     }).catch(() => {});
   }, []);
+
+  const handleGenerateTests = async () => {
+    if (!selectedAgent) return;
+    setGenerating(true);
+    setSuggestedPrompts([]);
+    try {
+      const res = await fetch(`${API_BASE}/api/evaluate/generate-test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_runtime_id: selectedAgent.value }),
+      });
+      if (!res.ok) throw new Error('Failed to generate tests');
+      const data = await res.json();
+      setSuggestedPrompts(data.prompts || []);
+      if (data.prompts?.length > 0) {
+        setTestPrompt(data.prompts[0].prompt);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleRunEval = async () => {
     if (!selectedAgent || !testPrompt.trim() || selectedEvaluators.length === 0) return;
@@ -161,15 +186,58 @@ export default function EvaluationsPage() {
               placeholder="Select evaluators"
             />
           </FormField>
-          <FormField label="Test Prompt">
+          <FormField
+            label={
+              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                <span>Test Prompt</span>
+                <Button
+                  variant="inline-icon"
+                  iconName="gen-ai"
+                  onClick={handleGenerateTests}
+                  loading={generating}
+                  disabled={!selectedAgent}
+                  ariaLabel="Generate test prompts with AI"
+                />
+              </SpaceBetween>
+            }
+          >
             <Textarea
               value={testPrompt}
               onChange={({ detail }) => setTestPrompt(detail.value)}
               rows={2}
-              placeholder="Enter a test prompt..."
+              placeholder="Enter a test prompt or click ✨ to generate..."
             />
           </FormField>
         </ColumnLayout>
+
+        {suggestedPrompts.length > 0 && (
+          <div style={{ marginTop: '12px' }}>
+            <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>Suggested Tests</Box>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {suggestedPrompts.map((sp, i) => (
+                <div
+                  key={i}
+                  onClick={() => setTestPrompt(sp.prompt)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setTestPrompt(sp.prompt); }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '16px',
+                    border: testPrompt === sp.prompt ? '2px solid #0972d3' : '1px solid #e9ebed',
+                    backgroundColor: testPrompt === sp.prompt ? '#f2f8fd' : '#fff',
+                    cursor: 'pointer',
+                    fontSize: '0.85em',
+                    maxWidth: '100%',
+                  }}
+                  title={sp.description}
+                >
+                  {sp.prompt.length > 80 ? sp.prompt.slice(0, 80) + '...' : sp.prompt}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Container>
 
       {running && (

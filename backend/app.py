@@ -332,6 +332,57 @@ def list_evaluators_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class GenerateTestRequest(BaseModel):
+    agent_runtime_id: str
+
+
+@app.post("/api/evaluate/generate-test")
+def generate_test_prompt(body: GenerateTestRequest):
+    """Use an LLM to generate a good test prompt based on the agent's configuration."""
+    try:
+        control = get_control_client()
+        agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
+        agent.pop("ResponseMetadata", None)
+        for k in ("createdAt", "lastUpdatedAt"):
+            if k in agent and hasattr(agent[k], "isoformat"):
+                agent[k] = agent[k].isoformat()
+
+        # Build context about the agent
+        agent_context = json.dumps({
+            "name": agent.get("agentRuntimeName"),
+            "description": agent.get("description", ""),
+            "environmentVariables": agent.get("environmentVariables", {}),
+            "protocol": agent.get("protocolConfiguration", {}),
+        }, indent=2)
+
+        bedrock = boto3.client("bedrock-runtime", region_name=REGION)
+        response = bedrock.converse(
+            modelId=AGENT_BUILDER_MODEL_ID,
+            messages=[{
+                "role": "user",
+                "content": [{"text": f"""Given this AgentCore agent configuration:
+
+{agent_context}
+
+Generate 3 diverse test prompts that would thoroughly test this agent's capabilities. Each prompt should exercise different tools or behaviors.
+
+Return ONLY a JSON array of objects with "prompt" and "description" fields. No other text.
+Example: [{{"prompt": "...", "description": "Tests X capability"}}]"""}],
+            }],
+            inferenceConfig={"maxTokens": 500},
+        )
+        text = response["output"]["message"]["content"][0]["text"]
+        # Extract JSON from response
+        import re
+        match = re.search(r'\[[\s\S]*\]', text)
+        if match:
+            prompts = json.loads(match.group())
+            return {"prompts": prompts}
+        return {"prompts": [{"prompt": "Hello! What can you help me with?", "description": "Basic capability check"}]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class RunEvalRequest(BaseModel):
     agent_runtime_id: str
     test_prompt: str

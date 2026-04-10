@@ -433,7 +433,7 @@ class RunEvalRequest(BaseModel):
 
 @app.post("/api/evaluate")
 def run_evaluation_endpoint(body: RunEvalRequest):
-    """Run on-demand evaluation on a deployed agent."""
+    """Run on-demand evaluation on a deployed agent using real OTEL traces."""
     import uuid
     import time
 
@@ -444,9 +444,9 @@ def run_evaluation_endpoint(body: RunEvalRequest):
         # Get agent ARN
         agent = control.get_agent_runtime(agentRuntimeId=body.agent_runtime_id)
         arn = agent["agentRuntimeArn"]
-        session_id = f"eval_session_{uuid.uuid4().hex}"
+        session_id = f"eval_{uuid.uuid4().hex[:12]}"
 
-        # Invoke the agent
+        # Invoke the agent (this generates real OTEL traces if agent has strands-agents[otel])
         response = runtime.invoke_agent_runtime(
             agentRuntimeArn=arn,
             qualifier="DEFAULT",
@@ -461,31 +461,53 @@ def run_evaluation_endpoint(body: RunEvalRequest):
             data = resp_body.read()
             agent_response = data.decode("utf-8") if isinstance(data, bytes) else str(data)
 
-        time.sleep(3)  # Wait for OTEL spans
+        # Wait for OTEL spans to propagate to CloudWatch
+        time.sleep(15)
 
-        # Run evaluations
+        # Use the ObservabilityClient to fetch real spans
+        from bedrock_agentcore_starter_toolkit.operations.observability.client import ObservabilityClient
+        obs_client = ObservabilityClient(region_name=REGION)
+
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - (7 * 86400 * 1000)  # 7 days back
+
+        spans = obs_client.query_spans_by_session(
+            session_id=session_id,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+            agent_id=body.agent_runtime_id,
+        )
+
+        if not spans:
+            # Retry after more wait
+            time.sleep(15)
+            spans = obs_client.query_spans_by_session(
+                session_id=session_id,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+                agent_id=body.agent_runtime_id,
+            )
+
+        # Run evaluations using real trace IDs
         results = []
+        trace_ids = list(set(s.trace_id for s in spans if s.trace_id))
+
         for eval_id in body.evaluator_ids[:5]:
             try:
-                eval_response = runtime.evaluate(
-                    evaluatorId=eval_id,
-                    evaluationInput={
-                        "sessionSpans": [
-                            {
-                                "traceId": session_id,
-                                "spanId": f"span_{uuid.uuid4().hex[:8]}",
-                                "name": "agent_invocation",
-                                "startTimeUnixNano": str(int(time.time() * 1e9)),
-                                "endTimeUnixNano": str(int((time.time() + 5) * 1e9)),
-                                "attributes": [
-                                    {"key": "gen_ai.system", "value": {"stringValue": "aws.bedrock"}},
-                                    {"key": "gen_ai.prompt.0.content", "value": {"stringValue": body.test_prompt}},
-                                    {"key": "gen_ai.completion.0.content", "value": {"stringValue": agent_response}},
-                                ],
-                            }
-                        ]
-                    },
-                )
+                if trace_ids:
+                    eval_response = runtime.evaluate(
+                        evaluatorId=eval_id,
+                        evaluationTarget={"traceIds": trace_ids[:10]},
+                    )
+                else:
+                    # Fallback: no spans found, report the issue
+                    results.append({
+                        "evaluator": eval_id,
+                        "score": None,
+                        "error": "No OTEL spans found. Agent may need strands-agents[otel] and aws-opentelemetry-distro in requirements.",
+                    })
+                    continue
+
                 eval_response.pop("ResponseMetadata", None)
                 results.append({
                     "evaluator": eval_id,
@@ -504,6 +526,8 @@ def run_evaluation_endpoint(body: RunEvalRequest):
             "agent": body.agent_runtime_id,
             "prompt": body.test_prompt,
             "response_preview": agent_response[:500],
+            "spans_found": len(spans),
+            "trace_ids": trace_ids,
             "results": results,
         }
     except ClientError as e:

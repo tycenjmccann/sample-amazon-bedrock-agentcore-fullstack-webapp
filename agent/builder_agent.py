@@ -37,7 +37,7 @@ def deploy_agent(agent_name: str, agent_code: str, requirements: str = "", descr
         safe_name = "agent_" + safe_name
 
     if not requirements.strip():
-        requirements = "strands-agents\nstrands-agents-tools\nbedrock-agentcore\nboto3\n"
+        requirements = "strands-agents[otel]\nstrands-agents-tools\nbedrock-agentcore\naws-opentelemetry-distro\nboto3\n"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Write agent code
@@ -530,7 +530,7 @@ CRITICAL RULES:
 - NEVER create fake, mock, or placeholder data. Every tool must use real AWS resources (DynamoDB tables, S3 buckets, etc.) as specified in the requirements.
 - Each tool: 20-40 lines max, returns json.dumps(...)
 - Total code under 150 lines
-- requirements.txt needs: strands-agents, strands-agents-tools, bedrock-agentcore, boto3
+- requirements.txt needs: strands-agents[otel], strands-agents-tools, bedrock-agentcore, aws-opentelemetry-distro, boto3
 - Use model: us.anthropic.claude-haiku-4-5-20251001-v1:0
 
 Return ONLY the Python code, no explanation. Start with ```python-deploy and end with ```"""}]}],

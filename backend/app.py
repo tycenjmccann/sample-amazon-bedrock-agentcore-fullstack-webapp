@@ -549,6 +549,60 @@ def health_check():
 
 
 # ---------------------------------------------------------------------------
+# Gateway Tool Call (with Cedar policy enforcement via persona)
+# ---------------------------------------------------------------------------
+
+GW_URL = os.environ.get("GATEWAY_URL", "https://datesparkenterpriseauth-zdgw5arcdt.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp")
+COGNITO_POOL_ID = os.environ.get("COGNITO_POOL_ID", "us-east-1_xcXG2z25u")
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "4rs4s2a0f619fs6qkai6rngtn8")
+PERSONA_PASSWORDS = {
+    "john": os.environ.get("JOHN_PASSWORD", "DateSparkJohn2026!"),
+    "jane": os.environ.get("JANE_PASSWORD", "DateSparkJane2026!"),
+}
+
+def _get_gateway_token(persona: str) -> str:
+    """Get a Cognito token for the given persona (john or jane)."""
+    import hmac, hashlib, base64
+    cognito = boto3.client("cognito-idp", region_name=REGION)
+    secret = cognito.describe_user_pool_client(
+        UserPoolId=COGNITO_POOL_ID, ClientId=COGNITO_CLIENT_ID
+    )["UserPoolClient"]["ClientSecret"]
+    msg = persona + COGNITO_CLIENT_ID
+    secret_hash = base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
+    resp = cognito.initiate_auth(
+        ClientId=COGNITO_CLIENT_ID, AuthFlow="USER_PASSWORD_AUTH",
+        AuthParameters={"USERNAME": persona, "PASSWORD": PERSONA_PASSWORDS[persona], "SECRET_HASH": secret_hash},
+    )
+    return resp["AuthenticationResult"]["AccessToken"]
+
+
+class GatewayToolCallRequest(BaseModel):
+    persona: str
+    tool_name: str
+    arguments: dict = {}
+
+
+@app.post("/api/gateway/call-tool")
+def gateway_call_tool(body: GatewayToolCallRequest):
+    """Call a gateway tool as a specific persona. Cedar policies enforce permissions."""
+    import httpx
+    if body.persona not in PERSONA_PASSWORDS:
+        raise HTTPException(status_code=400, detail=f"Unknown persona: {body.persona}")
+    try:
+        token = _get_gateway_token(body.persona)
+        resp = httpx.post(GW_URL, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                  "params": {"name": body.tool_name, "arguments": body.arguments}}, timeout=30)
+        result = resp.json()
+        error = result.get("error")
+        if error and "policy enforcement" in str(error.get("message", "")).lower():
+            return {"status": "denied", "persona": body.persona, "tool": body.tool_name,
+                    "message": f"Access denied by Cedar policy. {body.persona.title()} does not have permission to use {body.tool_name}."}
+        return {"status": "allowed", "persona": body.persona, "tool": body.tool_name, "result": result.get("result")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
 # Agent Builder — Bedrock-powered agent configuration assistant
 # ---------------------------------------------------------------------------
 

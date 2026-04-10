@@ -13,17 +13,6 @@ import { listAgents, AgentRuntimeSummary } from '../api/agents';
 import { listGateways, GatewaySummary } from '../api/gateways';
 import { listMemories, MemorySummary } from '../api/memory';
 
-function StatusCount({ label, count, status }: { label: string; count: number; status: 'success' | 'info' | 'warning' }) {
-  return (
-    <div>
-      <Box variant="awsui-key-label">{label}</Box>
-      <Box variant="h1">
-        <StatusIndicator type={status}>{count}</StatusIndicator>
-      </Box>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentRuntimeSummary[]>([]);
@@ -37,11 +26,7 @@ export default function DashboardPage() {
       setLoading(true);
       setError('');
       try {
-        const [a, g, m] = await Promise.allSettled([
-          listAgents(),
-          listGateways(),
-          listMemories(),
-        ]);
+        const [a, g, m] = await Promise.allSettled([listAgents(), listGateways(), listMemories()]);
         if (a.status === 'fulfilled') setAgents(a.value);
         if (g.status === 'fulfilled') setGateways(g.value);
         if (m.status === 'fulfilled') setMemories(m.value);
@@ -55,7 +40,12 @@ export default function DashboardPage() {
   }, []);
 
   const readyAgents = agents.filter((a) => a.status === 'READY').length;
-  const readyGateways = gateways.filter((g) => g.status === 'READY').length;
+
+  function statusType(s: string) {
+    if (s === 'READY' || s === 'ACTIVE') return 'success' as const;
+    if (s === 'CREATING' || s === 'UPDATING') return 'in-progress' as const;
+    return 'error' as const;
+  }
 
   return (
     <SpaceBetween size="l">
@@ -64,133 +54,123 @@ export default function DashboardPage() {
         description="Manage and monitor your Amazon Bedrock AgentCore resources"
         actions={
           <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => navigate('/agents')}>View Agents</Button>
-            <Button variant="primary" onClick={() => navigate('/chat')}>
-              Open Chat
-            </Button>
+            <Button onClick={() => navigate('/agents/list')}>View All Agents</Button>
+            <Button variant="primary" onClick={() => navigate('/builder')}>Build Agent</Button>
           </SpaceBetween>
         }
       >
         AgentCore Operations Dashboard
       </Header>
 
-      {error && (
-        <Alert type="error" dismissible onDismiss={() => setError('')}>
-          {error}
-        </Alert>
-      )}
+      {error && <Alert type="error" dismissible onDismiss={() => setError('')}>{error}</Alert>}
 
+      {/* Resource Overview */}
       <Container header={<Header variant="h2">Resource Overview</Header>}>
-        <ColumnLayout columns={4} variant="text-grid">
-          <StatusCount
-            label="Agent Runtimes"
-            count={agents.length}
-            status={agents.length > 0 ? 'success' : 'info'}
-          />
-          <StatusCount
-            label="Ready Agents"
-            count={readyAgents}
-            status={readyAgents > 0 ? 'success' : 'warning'}
-          />
-          <StatusCount
-            label="MCP Gateways"
-            count={gateways.length}
-            status={readyGateways > 0 ? 'success' : 'info'}
-          />
-          <StatusCount
-            label="Memory Stores"
-            count={memories.length}
-            status={memories.length > 0 ? 'success' : 'info'}
-          />
+        <ColumnLayout columns={3} variant="text-grid">
+          <div>
+            <Box variant="awsui-key-label">Agent Runtimes</Box>
+            <Box variant="h1">
+              <StatusIndicator type={readyAgents > 0 ? 'success' : 'info'}>
+                {readyAgents} / {agents.length}
+              </StatusIndicator>
+            </Box>
+            <Box variant="small" color="text-body-secondary">ready</Box>
+          </div>
+          <div>
+            <Box variant="awsui-key-label">MCP Gateways</Box>
+            <Box variant="h1">
+              <StatusIndicator type={gateways.length > 0 ? 'success' : 'info'}>
+                {gateways.length}
+              </StatusIndicator>
+            </Box>
+          </div>
+          <div>
+            <Box variant="awsui-key-label">Memory Stores</Box>
+            <Box variant="h1">
+              <StatusIndicator type={memories.length > 0 ? 'success' : 'info'}>
+                {memories.length}
+              </StatusIndicator>
+            </Box>
+          </div>
         </ColumnLayout>
       </Container>
 
+      {/* Agent Runtimes */}
+      <Container
+        header={
+          <Header variant="h2" actions={<Button variant="inline-link" onClick={() => navigate('/agents/list')}>View all</Button>}>
+            Agent Runtimes
+          </Header>
+        }
+      >
+        {loading ? (
+          <StatusIndicator type="loading">Loading...</StatusIndicator>
+        ) : agents.length === 0 ? (
+          <Box textAlign="center" color="text-body-secondary" padding="l">No agents deployed yet.</Box>
+        ) : (
+          <SpaceBetween size="s">
+            {agents.map((agent) => (
+              <div key={agent.agentRuntimeId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Link onFollow={(e) => { e.preventDefault(); navigate(`/agents/${agent.agentRuntimeId}`); }}>
+                  {agent.agentRuntimeName}
+                </Link>
+                <StatusIndicator type={statusType(agent.status)}>{agent.status}</StatusIndicator>
+              </div>
+            ))}
+          </SpaceBetween>
+        )}
+      </Container>
+
+      {/* Gateways + Memory side by side */}
       <ColumnLayout columns={2}>
-        <Container header={<Header variant="h2">Agent Runtimes</Header>}>
+        <Container
+          header={
+            <Header variant="h2" actions={<Button variant="inline-link" onClick={() => navigate('/gateways')}>Manage</Button>}>
+              MCP Gateways
+            </Header>
+          }
+        >
           {loading ? (
-            <StatusIndicator type="loading">Loading agents...</StatusIndicator>
-          ) : agents.length === 0 ? (
-            <Box textAlign="center" color="text-body-secondary" padding="l">
-              No agent runtimes found. Deploy an agent to get started.
-            </Box>
+            <StatusIndicator type="loading">Loading...</StatusIndicator>
+          ) : gateways.length === 0 ? (
+            <Box textAlign="center" color="text-body-secondary" padding="l">No gateways configured.</Box>
           ) : (
             <SpaceBetween size="s">
-              {agents.map((agent) => (
-                <div
-                  key={agent.agentRuntimeId}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Link
-                    onFollow={(e) => {
-                      e.preventDefault();
-                      navigate(`/agents/${agent.agentRuntimeId}`);
-                    }}
-                  >
-                    {agent.agentRuntimeName}
+              {gateways.map((gw) => (
+                <div key={gw.gatewayId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Link onFollow={(e) => { e.preventDefault(); navigate('/gateways'); }}>
+                    {gw.name}
                   </Link>
-                  <StatusIndicator
-                    type={
-                      agent.status === 'READY'
-                        ? 'success'
-                        : agent.status === 'CREATING' || agent.status === 'UPDATING'
-                          ? 'in-progress'
-                          : 'error'
-                    }
-                  >
-                    {agent.status}
-                  </StatusIndicator>
+                  <StatusIndicator type={statusType(gw.status)}>{gw.status}</StatusIndicator>
                 </div>
               ))}
             </SpaceBetween>
           )}
         </Container>
 
-        <Container header={<Header variant="h2">Demo Guide</Header>}>
-          <SpaceBetween size="s">
-            <Box variant="p">
-              This operations dashboard showcases Amazon Bedrock AgentCore capabilities:
-            </Box>
-            <div>
-              <Box variant="awsui-key-label">Act 1 — Build the Agent</Box>
-              <Box variant="p" color="text-body-secondary">
-                Trust & safety content moderation agent built with Strands SDK
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Act 2 — MCP Gateway</Box>
-              <Box variant="p" color="text-body-secondary">
-                Connect tools via Gateway — zero code integration
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Act 3 — Swap Models</Box>
-              <Box variant="p" color="text-body-secondary">
-                Change foundation models with a single parameter
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Act 4 — Evaluations</Box>
-              <Box variant="p" color="text-body-secondary">
-                Compare model performance with data-driven evals
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Act 5 — Memory</Box>
-              <Box variant="p" color="text-body-secondary">
-                Cross-session memory for personalized experiences
-              </Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Act 6 — Policy Governance</Box>
-              <Box variant="p" color="text-body-secondary">
-                Cedar-based policies controlling per-user agent behavior
-              </Box>
-            </div>
-          </SpaceBetween>
+        <Container
+          header={
+            <Header variant="h2" actions={<Button variant="inline-link" onClick={() => navigate('/memory')}>Manage</Button>}>
+              Memory Stores
+            </Header>
+          }
+        >
+          {loading ? (
+            <StatusIndicator type="loading">Loading...</StatusIndicator>
+          ) : memories.length === 0 ? (
+            <Box textAlign="center" color="text-body-secondary" padding="l">No memory stores configured.</Box>
+          ) : (
+            <SpaceBetween size="s">
+              {memories.map((mem) => (
+                <div key={mem.memoryId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Link onFollow={(e) => { e.preventDefault(); navigate('/memory'); }}>
+                    {mem.name}
+                  </Link>
+                  <StatusIndicator type={statusType(mem.status)}>{mem.status}</StatusIndicator>
+                </div>
+              ))}
+            </SpaceBetween>
+          )}
         </Container>
       </ColumnLayout>
     </SpaceBetween>

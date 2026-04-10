@@ -17,8 +17,6 @@ import remarkGfm from 'remark-gfm';
 import { listAgents, AgentRuntimeSummary } from '../api/agents';
 import {
   streamAgentBuilderChat,
-  deployAgent,
-  getDeployStatus,
   parseDeployableCode,
   ChatMessage as APIChatMessage,
 } from '../api/agent-builder';
@@ -374,7 +372,8 @@ export default function AgentsListPage() {
     const poll = async () => {
       attempts++;
       try {
-        const status = await getDeployStatus(agentRuntimeId);
+        const res = await fetch(`/management/api/agents/${encodeURIComponent(agentRuntimeId)}`);
+        const status = await res.json();
 
         if (status.status === 'READY') {
           setDeployment((prev) => ({ ...prev, status: 'success' }));

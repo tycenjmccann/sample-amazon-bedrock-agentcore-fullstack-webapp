@@ -1,5 +1,3 @@
-const API_BASE = '/management';
-
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -13,29 +11,6 @@ export interface AgentBuilderChatRequest {
 export interface StreamEvent {
   type: 'text' | 'done';
   content?: string;
-}
-
-export interface DeployRequest {
-  agent_name: string;
-  description: string;
-  agent_code: string;
-  model_id?: string;
-}
-
-export interface DeployResponse {
-  status: string;
-  agentRuntimeId: string;
-  agentRuntimeName: string;
-  artifactS3Uri: string;
-  message: string;
-  response: Record<string, unknown>;
-}
-
-export interface DeployStatusResponse {
-  status: string;
-  agentRuntimeId: string;
-  agentRuntimeName: string;
-  detail: Record<string, unknown>;
 }
 
 /**
@@ -113,36 +88,6 @@ export async function streamAgentBuilderChat(
   } catch (error) {
     onError(error instanceof Error ? error.message : 'Unknown error');
   }
-}
-
-/**
- * Deploy an agent to AgentCore Runtime.
- */
-export async function deployAgent(request: DeployRequest): Promise<DeployResponse> {
-  const res = await fetch(`${API_BASE}/api/agent-builder/deploy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(errorData.detail || `Deploy failed: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-/**
- * Check the deployment status of an agent runtime.
- */
-export async function getDeployStatus(agentRuntimeId: string): Promise<DeployStatusResponse> {
-  const res = await fetch(
-    `${API_BASE}/api/agent-builder/deploy/${encodeURIComponent(agentRuntimeId)}/status`,
-  );
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(errorData.detail || `Status check failed: ${res.statusText}`);
-  }
-  return res.json();
 }
 
 /**

@@ -8,6 +8,7 @@ import Navigation from './components/Navigation';
 import DashboardPage from './pages/DashboardPage';
 import AgentsListPage from './pages/AgentsListPage';
 import AgentDetailPage from './pages/AgentDetailPage';
+import AgentsPage from './pages/AgentsPage';
 import ChatPage from './pages/ChatPage';
 import EvaluationsPage from './pages/EvaluationsPage';
 import GatewaysPage from './pages/GatewaysPage';
@@ -144,8 +145,9 @@ function AppContent() {
           <ContentLayout defaultPadding>
             <Routes>
               <Route path="/" element={<DashboardPage />} />
-              <Route path="/agents" element={<AgentsListPage />} />
+              <Route path="/agents/list" element={<AgentsPage />} />
               <Route path="/agents/:agentId" element={<AgentDetailPage />} />
+              <Route path="/builder" element={<AgentsListPage />} />
               <Route path="/chat" element={<ChatPage />} />
               <Route path="/evaluations" element={<EvaluationsPage />} />
               <Route path="/gateways" element={<GatewaysPage />} />

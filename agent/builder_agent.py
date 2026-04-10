@@ -37,7 +37,7 @@ def deploy_agent(agent_name: str, agent_code: str, requirements: str = "", descr
         safe_name = "agent_" + safe_name
 
     if not requirements.strip():
-        requirements = "strands-agents\nstrands-agents-tools\nbedrock-agentcore\nbedrock-agentcore-starter-toolkit\nboto3\n"
+        requirements = "strands-agents\nstrands-agents-tools\nbedrock-agentcore\nboto3\n"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Write agent code
